@@ -241,6 +241,7 @@ func TestBatchRoundTrip(t *testing.T) {
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
+		NewBatchData(RawSpanBatchWithBLS(rng, chainID)),
 	}
 
 	for i, batch := range batches {

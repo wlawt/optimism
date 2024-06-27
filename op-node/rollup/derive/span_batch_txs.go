@@ -448,25 +448,34 @@ func (sbtx *spanBatchTxs) AddTxs(txs [][]byte, chainID *big.Int) error {
 		if tx.Protected() && tx.ChainId().Cmp(chainID) != 0 {
 			return fmt.Errorf("protected tx has chain ID %d, but expected chain ID %d", tx.ChainId(), chainID)
 		}
-		var txSig spanBatchSignature
-		v, r, s := tx.RawSignatureValues()
-		R, _ := uint256.FromBig(r)
-		S, _ := uint256.FromBig(s)
-		txSig.v = v.Uint64()
-		txSig.r = R
-		txSig.s = S
-		sbtx.txSigs = append(sbtx.txSigs, txSig)
+		var (
+			txSig spanBatchSignature
+			v *big.Int
+			r *big.Int
+			s *big.Int
+		)
+		if tx.Type() != types.BLSTxType {
+			v, r, s = tx.RawSignatureValues()
+			R, _ := uint256.FromBig(r)
+			S, _ := uint256.FromBig(s)
+			txSig.v = v.Uint64()
+			txSig.r = R
+			txSig.s = S
+			sbtx.txSigs = append(sbtx.txSigs, txSig)
+		}
 		contractCreationBit := uint(1)
 		if tx.To() != nil {
 			sbtx.txTos = append(sbtx.txTos, *tx.To())
 			contractCreationBit = uint(0)
 		}
 		sbtx.contractCreationBits.SetBit(sbtx.contractCreationBits, idx+int(offset), contractCreationBit)
-		yParityBit, err := convertVToYParity(txSig.v, int(tx.Type()))
-		if err != nil {
-			return err
+		if tx.Type() != types.BLSTxType {
+			yParityBit, err := convertVToYParity(txSig.v, int(tx.Type()))
+			if err != nil {
+				return err
+			}
+			sbtx.yParityBits.SetBit(sbtx.yParityBits, idx+int(offset), yParityBit)
 		}
-		sbtx.yParityBits.SetBit(sbtx.yParityBits, idx+int(offset), yParityBit)
 		sbtx.txNonces = append(sbtx.txNonces, tx.Nonce())
 		sbtx.txGases = append(sbtx.txGases, tx.Gas())
 		stx, err := newSpanBatchTx(tx)

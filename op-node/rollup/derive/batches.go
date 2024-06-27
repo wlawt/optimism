@@ -331,6 +331,10 @@ func checkSpanBatch(ctx context.Context, cfg *rollup.Config, log log.Logger, l1B
 				log.Warn("sequencers may not embed any deposits into batch data, but found tx that has one", "tx_index", i)
 				return BatchDrop
 			}
+			if txBytes[0] == types.BLSTxType && len(batch.GetAggregatedSignature(i)) == 0 {
+				log.Warn("a bls transaction was found in a batch, but no aggregated signature was found", "tx_index", i)
+				return BatchDrop
+			}
 		}
 	}
 
