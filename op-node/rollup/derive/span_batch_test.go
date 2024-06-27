@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"math/rand"
 	"testing"
+	"fmt"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -223,6 +224,26 @@ func TestSpanBatchL1OriginCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, rawSpanBatch.l1OriginCheck, sb.l1OriginCheck)
+}
+
+func TestSpanBatchAggregatedSig(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x77556690))
+	chainID := big.NewInt(rng.Int63n(1000))
+
+	rawSpanBatch := RawSpanBatchWithBLS(rng, chainID)
+
+	var buf bytes.Buffer
+	err := rawSpanBatch.encodeAggregatedSig(&buf)
+	require.NoError(t, err)
+
+	result := buf.Bytes()
+	fmt.Printf("EEEEEE %v\n", result)
+	r := bytes.NewReader(result)
+	var sb RawSpanBatch
+	err = sb.decodeAggregatedSig(r)
+	require.NoError(t, err)
+
+	require.Equal(t, rawSpanBatch.aggregatedSig, sb.aggregatedSig)
 }
 
 func TestSpanBatchPayload(t *testing.T) {
