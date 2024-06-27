@@ -271,6 +271,7 @@ func (btx *spanBatchTxs) recoverV(chainID *big.Int) error {
 			v = bit
 		case types.DynamicFeeTxType:
 			v = bit
+		case types.BLSTxType:
 		default:
 			return fmt.Errorf("invalid tx type: %d", txType)
 		}
@@ -386,6 +387,7 @@ func convertVToYParity(v uint64, txType int) (uint, error) {
 		yParityBit = uint(v)
 	case types.DynamicFeeTxType:
 		yParityBit = uint(v)
+	case types.BLSTxType:
 	default:
 		return 0, fmt.Errorf("invalid tx type: %d", txType)
 	}

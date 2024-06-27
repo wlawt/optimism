@@ -11,12 +11,102 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/testutils"
+
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls/blst"
 )
+
+func RawSpanBatchWithBLS(rng *rand.Rand, chainId *big.Int) *RawSpanBatch {
+	blockCount := uint64(4 + rng.Int()&0xFF) // at least 4
+	originBits := new(big.Int)
+	for i := 0; i < int(blockCount); i++ {
+		bit := uint(0)
+		if testutils.RandomBool(rng) {
+			bit = uint(1)
+		}
+		originBits.SetBit(originBits, i, bit)
+	}
+	var blockTxCounts []uint64
+	totalblockTxCounts := uint64(0)
+	for i := 0; i < int(blockCount); i++ {
+		blockTxCount := 1 + uint64(rng.Intn(16))
+		blockTxCounts = append(blockTxCounts, blockTxCount)
+		totalblockTxCounts += blockTxCount
+	}
+	var txs [][]byte
+	var sigs []bls.Signature
+	for i := 0; i < int(totalblockTxCounts); i++ {
+		var tx *types.Transaction
+		blsSigner := types.NewBLSSigner(chainId)
+
+		blsKey, _ := crypto.GenerateBLSKey()
+		ecdsaPrivKey, err := crypto.BLSToECDSA(blsKey)
+		if err != nil {
+			panic(err)
+		}
+		baseFee := new(big.Int).SetUint64(rng.Uint64())
+		tip := big.NewInt(rng.Int63n(10 * params.GWei))
+		txData := &types.BLSTx{
+			ChainID:    blsSigner.ChainID(),
+			Nonce:      rng.Uint64(),
+			GasTipCap:  tip,
+			GasFeeCap:  new(big.Int).Add(baseFee, tip),
+			Gas:        params.TxGas + uint64(rng.Int63n(2_000_000)),
+			To:         testutils.RandomTo(rng),
+			Value:      testutils.RandomETH(rng, 10),
+			Data:       testutils.RandomData(rng, rng.Intn(testutils.RandomDataSize)),
+			AccessList: nil,
+			PublicKey:  blsKey.PublicKey().Marshal(),
+		}
+		tx, err = types.SignNewTx(ecdsaPrivKey, blsSigner, txData)
+		if err != nil {
+			panic(err)
+		}
+		sig := blsKey.Sign(tx.Hash().Bytes()).Marshal()
+		tx.SetSignature(sig)
+
+		s, err := blst.SignatureFromBytes(tx.Signature())
+		if err != nil {
+			panic(err)
+		}
+		sigs = append(sigs, s)
+		tx.SetSignature(nil)
+		rawTx, err := tx.MarshalBinary()
+		if err != nil {
+			panic("MarshalBinary:" + err.Error())
+		}
+		txs = append(txs, rawTx)
+	}
+	aggSig := blst.AggregateSignatures(sigs).Marshal()
+
+	spanBatchTxs, err := newSpanBatchTxs(txs, chainId)
+	if err != nil {
+		panic(err.Error())
+	}
+	rawSpanBatch := RawSpanBatch{
+		spanBatchPrefix: spanBatchPrefix{
+			relTimestamp:  uint64(rng.Uint32()),
+			l1OriginNum:   rng.Uint64(),
+			parentCheck:   [20]byte(testutils.RandomData(rng, 20)),
+			l1OriginCheck: [20]byte(testutils.RandomData(rng, 20)),
+		},
+		spanBatchPayload: spanBatchPayload{
+			blockCount:    blockCount,
+			originBits:    originBits,
+			blockTxCounts: blockTxCounts,
+			txs:           spanBatchTxs,
+			aggregatedSig: aggSig,
+		},
+	}
+	return &rawSpanBatch
+}
 
 func RandomRawSpanBatch(rng *rand.Rand, chainId *big.Int) *RawSpanBatch {
 	blockCount := uint64(4 + rng.Int()&0xFF) // at least 4

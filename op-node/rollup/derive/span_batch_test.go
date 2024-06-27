@@ -313,6 +313,25 @@ func TestSpanBatchTxs(t *testing.T) {
 	require.Equal(t, rawSpanBatch.txs, sb.txs)
 }
 
+func TestSpanBatchAggregatedSig(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x77556690))
+	chainID := big.NewInt(rng.Int63n(1000))
+
+	rawSpanBatch := RawSpanBatchWithBLS(rng, chainID)
+
+	var buf bytes.Buffer
+	err := rawSpanBatch.encodeAggregatedSig(&buf)
+	require.NoError(t, err)
+
+	result := buf.Bytes()
+	r := bytes.NewReader(result)
+	var sb RawSpanBatch
+	err = sb.decodeAggregatedSig(r)
+	require.NoError(t, err)
+
+	require.Equal(t, rawSpanBatch.aggregatedSig, sb.aggregatedSig)
+}
+
 func TestSpanBatchRoundTrip(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x77556694))
 	chainID := big.NewInt(rng.Int63n(1000))

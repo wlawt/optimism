@@ -43,6 +43,7 @@ type spanBatchPayload struct {
 	originBits    *big.Int      // Standard span-batch bitlist of blockCount bits. Each bit indicates if the L1 origin is changed at the L2 block.
 	blockTxCounts []uint64      // List of transaction counts for each L2 block
 	txs           *spanBatchTxs // Transactions encoded in SpanBatch specs
+	aggregatedSig []byte
 }
 
 // RawSpanBatch is another representation of SpanBatch, that encodes data according to SpanBatch specs.
@@ -188,6 +189,18 @@ func (bp *spanBatchPayload) decodeTxs(r *bytes.Reader) error {
 	return nil
 }
 
+func (bp *spanBatchPayload) decodeAggregatedSig(r *bytes.Reader) error {
+	aggSig, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("failed to read aggregated signature: %w", err)
+	}
+	bp.aggregatedSig = aggSig
+	if len(aggSig) == 0 {
+		bp.aggregatedSig = nil
+	}
+	return nil
+}
+
 // decodePayload parses data into bp.spanBatchPayload
 func (bp *spanBatchPayload) decodePayload(r *bytes.Reader) error {
 	if err := bp.decodeBlockCount(r); err != nil {
@@ -200,6 +213,9 @@ func (bp *spanBatchPayload) decodePayload(r *bytes.Reader) error {
 		return err
 	}
 	if err := bp.decodeTxs(r); err != nil {
+		return err
+	}
+	if err := bp.decodeAggregatedSig(r); err != nil {
 		return err
 	}
 	return nil
@@ -310,6 +326,14 @@ func (bp *spanBatchPayload) encodeTxs(w io.Writer) error {
 	return nil
 }
 
+func (bp *spanBatchPayload) encodeAggregatedSig(w io.Writer) error {
+	aggSig := bp.aggregatedSig
+	if _, err := w.Write(aggSig); err != nil {
+		return fmt.Errorf("cannot write aggregated sig: %w", err)
+	}
+	return nil
+}
+
 // encodePayload encodes spanBatchPayload
 func (bp *spanBatchPayload) encodePayload(w io.Writer) error {
 	if err := bp.encodeBlockCount(w); err != nil {
@@ -322,6 +346,9 @@ func (bp *spanBatchPayload) encodePayload(w io.Writer) error {
 		return err
 	}
 	if err := bp.encodeTxs(w); err != nil {
+		return err
+	}
+	if err := bp.encodeAggregatedSig(w); err != nil {
 		return err
 	}
 	return nil
@@ -374,6 +401,7 @@ func (b *RawSpanBatch) derive(blockTime, genesisTimestamp uint64, chainID *big.I
 			batch.Transactions = append(batch.Transactions, fullTxs[txIdx])
 			txIdx++
 		}
+		batch.AggregatedSig = b.aggregatedSig
 		spanBatch.Batches = append(spanBatch.Batches, &batch)
 	}
 	return &spanBatch, nil
@@ -393,9 +421,10 @@ func (b *RawSpanBatch) ToSpanBatch(blockTime, genesisTimestamp uint64, chainID *
 // similar to SingularBatch, but does not have ParentHash and EpochHash
 // because Span batch spec does not contain parent hash and epoch hash of every block in the span.
 type SpanBatchElement struct {
-	EpochNum     rollup.Epoch // aka l1 num
-	Timestamp    uint64
-	Transactions []hexutil.Bytes
+	EpochNum      rollup.Epoch // aka l1 num
+	Timestamp     uint64
+	Transactions  []hexutil.Bytes
+	AggregatedSig []byte
 }
 
 // singularBatchToElement converts a SingularBatch to a SpanBatchElement
@@ -509,6 +538,11 @@ func (b *SpanBatch) GetBlockTransactions(i int) []hexutil.Bytes {
 // GetBlockCount returns the number of blocks in the span
 func (b *SpanBatch) GetBlockCount() int {
 	return len(b.Batches)
+}
+
+// GetAggregatedSignature returns the BLS Aggregated Signature of the block at a given index in the span.
+func (b *SpanBatch) GetAggregatedSignature(i int) []byte {
+	return b.Batches[i].AggregatedSig
 }
 
 func (b *SpanBatch) peek(n int) *SpanBatchElement { return b.Batches[len(b.Batches)-1-n] }
