@@ -272,6 +272,7 @@ func (btx *spanBatchTxs) recoverV(chainID *big.Int) error {
 		case types.DynamicFeeTxType:
 			v = bit
 		case types.BLSTxType:
+			v = uint64(0)
 		default:
 			return fmt.Errorf("invalid tx type: %d", txType)
 		}
@@ -355,15 +356,13 @@ func (btx *spanBatchTxs) fullTxs(chainID *big.Int) ([][]byte, error) {
 			to = &btx.txTos[toIdx]
 			toIdx++
 		}
-		var (
-			v *big.Int
-			r *big.Int
-			s *big.Int
-		)
-		if txType := btx.txTypes[idx]; txType != 4 {
-			v = new(big.Int).SetUint64(btx.txSigs[idx].v)
-			r = btx.txSigs[idx].r.ToBig()
-			s = btx.txSigs[idx].s.ToBig()
+		v := new(big.Int).SetUint64(btx.txSigs[idx].v)
+		r := btx.txSigs[idx].r.ToBig()
+		s := btx.txSigs[idx].s.ToBig()
+		if btx.txTypes[idx] == types.BLSTxType {
+			v = big.NewInt(0)
+			r = big.NewInt(0)
+			s = big.NewInt(0)
 		}
 		tx, err := stx.convertToFullTx(nonce, gas, to, chainID, v, r, s)
 		if err != nil {
@@ -395,6 +394,7 @@ func convertVToYParity(v uint64, txType int) (uint, error) {
 	case types.DynamicFeeTxType:
 		yParityBit = uint(v)
 	case types.BLSTxType:
+		yParityBit = uint(0)
 	default:
 		return 0, fmt.Errorf("invalid tx type: %d", txType)
 	}
