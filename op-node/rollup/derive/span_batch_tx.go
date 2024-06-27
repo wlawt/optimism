@@ -45,6 +45,17 @@ type spanBatchDynamicFeeTxData struct {
 
 func (txData *spanBatchDynamicFeeTxData) txType() byte { return types.DynamicFeeTxType }
 
+type spanBatchBLSTxData struct {
+	Value      *big.Int
+	GasTipCap  *big.Int // a.k.a. maxPriorityFeePerGas
+	GasFeeCap  *big.Int // a.k.a. maxFeePerGas
+	Data       []byte
+	AccessList types.AccessList
+	PublicKey  []byte
+}
+
+func (txData *spanBatchBLSTxData) txType() byte { return types.BLSTxType }
+
 // Type returns the transaction type.
 func (tx *spanBatchTx) Type() uint8 {
 	return tx.inner.txType()
@@ -91,6 +102,13 @@ func (tx *spanBatchTx) decodeTyped(b []byte) (spanBatchTxData, error) {
 		err := rlp.DecodeBytes(b[1:], &inner)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode spanBatchDynamicFeeTxData: %w", err)
+		}
+		return &inner, nil
+	case types.BLSTxType:
+		var inner spanBatchBLSTxData
+		err := rlp.DecodeBytes(b[1:], &inner)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode spanBatchBLSTxData: %w", err)
 		}
 		return &inner, nil
 	default:
@@ -168,6 +186,20 @@ func (tx *spanBatchTx) convertToFullTx(nonce, gas uint64, to *common.Address, ch
 			R:          R,
 			S:          S,
 		}
+	case types.BLSTxType:
+		batchTxInner := tx.inner.(*spanBatchBLSTxData)
+		inner = &types.BLSTx{
+			ChainID:    chainID,
+			Nonce:      nonce,
+			GasTipCap:  batchTxInner.GasTipCap,
+			GasFeeCap:  batchTxInner.GasFeeCap,
+			Gas:        gas,
+			To:         to,
+			Value:      batchTxInner.Value,
+			Data:       batchTxInner.Data,
+			AccessList: batchTxInner.AccessList,
+			PublicKey:  batchTxInner.PublicKey,
+		}
 	default:
 		return nil, fmt.Errorf("invalid tx type: %d", tx.Type())
 	}
@@ -198,6 +230,15 @@ func newSpanBatchTx(tx types.Transaction) (*spanBatchTx, error) {
 			Value:      tx.Value(),
 			Data:       tx.Data(),
 			AccessList: tx.AccessList(),
+		}
+	case types.BLSTxType:
+		inner = &spanBatchBLSTxData{
+			GasTipCap:  tx.GasTipCap(),
+			GasFeeCap:  tx.GasFeeCap(),
+			Value:      tx.Value(),
+			Data:       tx.Data(),
+			AccessList: tx.AccessList(),
+			PublicKey:  tx.PublicKey(),
 		}
 	default:
 		return nil, fmt.Errorf("invalid tx type: %d", tx.Type())

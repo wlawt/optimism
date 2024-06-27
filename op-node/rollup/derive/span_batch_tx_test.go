@@ -24,6 +24,7 @@ func TestSpanBatchTxConvert(t *testing.T) {
 		{"legacy tx", 32, testutils.RandomLegacyTx, true},
 		{"access list tx", 32, testutils.RandomAccessListTx, true},
 		{"dynamic fee tx", 32, testutils.RandomDynamicFeeTx, true},
+		{"bls fee tx", 32, testutils.RandomBLSTx, true},
 	}
 
 	for i, testCase := range cases {
@@ -33,6 +34,9 @@ func TestSpanBatchTxConvert(t *testing.T) {
 			signer := types.NewLondonSigner(chainID)
 			if !testCase.protected {
 				signer = types.HomesteadSigner{}
+			}
+			if testCase.name == "bls fee tx" {
+				signer = types.NewBLSSigner(chainID)
 			}
 
 			for txIdx := 0; txIdx < testCase.trials; txIdx++ {
@@ -63,6 +67,7 @@ func TestSpanBatchTxRoundTrip(t *testing.T) {
 		{"legacy tx", 32, testutils.RandomLegacyTx, true},
 		{"access list tx", 32, testutils.RandomAccessListTx, true},
 		{"dynamic fee tx", 32, testutils.RandomDynamicFeeTx, true},
+		{"bls fee tx", 32, testutils.RandomBLSTx, true},
 	}
 
 	for i, testCase := range cases {
@@ -72,6 +77,9 @@ func TestSpanBatchTxRoundTrip(t *testing.T) {
 			signer := types.NewLondonSigner(chainID)
 			if !testCase.protected {
 				signer = types.HomesteadSigner{}
+			}
+			if testCase.name == "bls fee tx" {
+				signer = types.NewBLSSigner(chainID)
 			}
 
 			for txIdx := 0; txIdx < testCase.trials; txIdx++ {
