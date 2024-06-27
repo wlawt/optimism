@@ -355,9 +355,16 @@ func (btx *spanBatchTxs) fullTxs(chainID *big.Int) ([][]byte, error) {
 			to = &btx.txTos[toIdx]
 			toIdx++
 		}
-		v := new(big.Int).SetUint64(btx.txSigs[idx].v)
-		r := btx.txSigs[idx].r.ToBig()
-		s := btx.txSigs[idx].s.ToBig()
+		var (
+			v *big.Int
+			r *big.Int
+			s *big.Int
+		)
+		if txType := btx.txTypes[idx]; txType != 4 {
+			v = new(big.Int).SetUint64(btx.txSigs[idx].v)
+			r = btx.txSigs[idx].r.ToBig()
+			s = btx.txSigs[idx].s.ToBig()
+		}
 		tx, err := stx.convertToFullTx(nonce, gas, to, chainID, v, r, s)
 		if err != nil {
 			return nil, err
