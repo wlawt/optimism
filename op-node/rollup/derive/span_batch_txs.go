@@ -108,7 +108,10 @@ func (btx *spanBatchTxs) decodeYParityBits(r *bytes.Reader) error {
 }
 
 func (btx *spanBatchTxs) encodeTxSigsRS(w io.Writer) error {
-	for _, txSig := range btx.txSigs {
+	for i, txSig := range btx.txSigs {
+		if btx.txTypes[i] == types.BLSTxType {
+			continue
+		}
 		rBuf := txSig.r.Bytes32()
 		if _, err := w.Write(rBuf[:]); err != nil {
 			return fmt.Errorf("cannot write tx sig r: %w", err)
@@ -240,6 +243,9 @@ func (btx *spanBatchTxs) decodeTxDatas(r *bytes.Reader) error {
 		if txType == types.LegacyTxType {
 			btx.totalLegacyTxCount++
 		}
+		if txType == types.BLSTxType {
+			btx.txSigs = []spanBatchSignature{}
+		}
 	}
 	btx.txDatas = txDatas
 	btx.txTypes = txTypes
@@ -272,7 +278,7 @@ func (btx *spanBatchTxs) recoverV(chainID *big.Int) error {
 		case types.DynamicFeeTxType:
 			v = bit
 		case types.BLSTxType:
-			v = uint64(0)
+			//v = uint64(0)
 		default:
 			return fmt.Errorf("invalid tx type: %d", txType)
 		}
@@ -360,9 +366,9 @@ func (btx *spanBatchTxs) fullTxs(chainID *big.Int) ([][]byte, error) {
 		r := btx.txSigs[idx].r.ToBig()
 		s := btx.txSigs[idx].s.ToBig()
 		if btx.txTypes[idx] == types.BLSTxType {
-			v = big.NewInt(0)
-			r = big.NewInt(0)
-			s = big.NewInt(0)
+			v = nil
+			r = nil
+			s = nil
 		}
 		tx, err := stx.convertToFullTx(nonce, gas, to, chainID, v, r, s)
 		if err != nil {
@@ -394,7 +400,7 @@ func convertVToYParity(v uint64, txType int) (uint, error) {
 	case types.DynamicFeeTxType:
 		yParityBit = uint(v)
 	case types.BLSTxType:
-		yParityBit = uint(0)
+		//yParityBit = uint(0)
 	default:
 		return 0, fmt.Errorf("invalid tx type: %d", txType)
 	}
@@ -448,34 +454,33 @@ func (sbtx *spanBatchTxs) AddTxs(txs [][]byte, chainID *big.Int) error {
 		if tx.Protected() && tx.ChainId().Cmp(chainID) != 0 {
 			return fmt.Errorf("protected tx has chain ID %d, but expected chain ID %d", tx.ChainId(), chainID)
 		}
-		var (
-			txSig spanBatchSignature
-			v *big.Int
-			r *big.Int
-			s *big.Int
-		)
-		if tx.Type() != types.BLSTxType {
-			v, r, s = tx.RawSignatureValues()
-			R, _ := uint256.FromBig(r)
-			S, _ := uint256.FromBig(s)
-			txSig.v = v.Uint64()
-			txSig.r = R
-			txSig.s = S
+		var txSig spanBatchSignature
+		v, r, s := tx.RawSignatureValues()
+		R, _ := uint256.FromBig(r)
+		S, _ := uint256.FromBig(s)
+		txSig.v = v.Uint64()
+		txSig.r = R
+		txSig.s = S
+		if tx.Type() == types.BLSTxType {
+			sbtx.txSigs = append(sbtx.txSigs, spanBatchSignature{})
+		} else {
 			sbtx.txSigs = append(sbtx.txSigs, txSig)
 		}
+
 		contractCreationBit := uint(1)
 		if tx.To() != nil {
 			sbtx.txTos = append(sbtx.txTos, *tx.To())
 			contractCreationBit = uint(0)
 		}
 		sbtx.contractCreationBits.SetBit(sbtx.contractCreationBits, idx+int(offset), contractCreationBit)
-		if tx.Type() != types.BLSTxType {
-			yParityBit, err := convertVToYParity(txSig.v, int(tx.Type()))
-			if err != nil {
-				return err
-			}
-			sbtx.yParityBits.SetBit(sbtx.yParityBits, idx+int(offset), yParityBit)
+		yParityBit, err := convertVToYParity(txSig.v, int(tx.Type()))
+		if err != nil {
+			return err
 		}
+		if tx.Type() == types.BLSTxType {
+			yParityBit = uint(0)
+		}
+		sbtx.yParityBits.SetBit(sbtx.yParityBits, idx+int(offset), yParityBit)
 		sbtx.txNonces = append(sbtx.txNonces, tx.Nonce())
 		sbtx.txGases = append(sbtx.txGases, tx.Gas())
 		stx, err := newSpanBatchTx(tx)
