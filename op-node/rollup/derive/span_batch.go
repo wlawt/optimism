@@ -424,6 +424,7 @@ type SpanBatch struct {
 
 func (b *SpanBatch) AsSingularBatch() (*SingularBatch, bool) { return nil, false }
 func (b *SpanBatch) AsSpanBatch() (*SpanBatch, bool)         { return b, true }
+func (b *SpanBatch) AsBLSBatch() (*BLSBatch, bool)           { return nil, false }
 
 // spanBatchMarshaling is a helper type used for JSON marshaling.
 type spanBatchMarshaling struct {
