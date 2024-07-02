@@ -102,6 +102,37 @@ var channelTypesWithBLS = []struct {
 	},
 }
 
+// channelTypesWithBLS allows tests to run against different channel types
+var channelTypesWithBLS = []struct {
+	ChannelOut func(t *testing.T) ChannelOut
+	Name       string
+}{
+	{
+		Name: "Singular",
+		ChannelOut: func(t *testing.T) ChannelOut {
+			cout, err := NewSingularChannelOut(&nonCompressor{})
+			require.NoError(t, err)
+			return cout
+		},
+	},
+	{
+		Name: "Span",
+		ChannelOut: func(t *testing.T) ChannelOut {
+			cout, err := NewSpanChannelOut(0, big.NewInt(0), 128_000, Zlib)
+			require.NoError(t, err)
+			return cout
+		},
+	},
+	{
+		Name: "BLS",
+		ChannelOut: func(t *testing.T) ChannelOut {
+			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
+			require.NoError(t, err)
+			return cout
+		},
+	},
+}
+
 func TestChannelOutAddBlock(t *testing.T) {
 	for _, tcase := range channelTypesWithBLS {
 		t.Run(tcase.Name, func(t *testing.T) {
