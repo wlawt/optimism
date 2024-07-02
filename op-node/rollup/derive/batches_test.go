@@ -595,6 +595,902 @@ func TestValidBatch(t *testing.T) {
 			Expected: BatchDrop,
 		},
 	}
+	blsBatchTestCases := []ValidBatchTestCase{
+		{
+			Name:       "missing L1 info",
+			L1Blocks:   []eth.L1BlockRef{},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.ParentHash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchUndecided,
+			ExpectedLog: "missing L1 block input, cannot proceed with batch checking",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "future timestamp",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.ParentHash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time + 1, // 1 too high
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchFuture,
+			ExpectedLog: "received out-of-order batch for future processing after next batch",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "misaligned timestamp",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.ParentHash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time - 1, // block time is 2, so this is 1 too low
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "bls batch has no new blocks after safe head",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "invalid parent block hash",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   testutils.RandomHash(rng),
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "ignoring batch with mismatching parent hash",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "sequence window expired",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C, l1D, l1E, l1F},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1F,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.ParentHash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch was included too late, sequence window expired",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "epoch too old, but good parent hash and timestamp", // repeat of now outdated l2A3 data
+			L1Blocks:   []eth.L1BlockRef{l1B, l1C, l1D},
+			L2SafeHead: l2B0, // we already moved on to B
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2B0.Hash,                          // build on top of safe head to continue
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number), // epoch A is no longer valid
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2B0.Time + defaultBlockTime, // pass the timestamp check to get too epoch check
+						Transactions: nil,
+					},
+					{
+						EpochNum:     rollup.Epoch(l1B.Number),
+						EpochHash:    l1B.Hash, // pass the l1 origin check
+						Timestamp:    l2B0.Time + defaultBlockTime*2,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "dropped batch, epoch is too old",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "insufficient L1 info for eager derivation",
+			L1Blocks:   []eth.L1BlockRef{l1A}, // don't know about l1B yet
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2B0.ParentHash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l2B0.L1Origin.Hash,
+						Timestamp:    l2B0.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchUndecided,
+			ExpectedLog: "eager batch wants to advance epoch, but could not without more L1 blocks",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "insufficient L1 info for eager derivation - long span",
+			L1Blocks:   []eth.L1BlockRef{l1A}, // don't know about l1B yet
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A3.ParentHash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2B0.ParentHash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l2B0.L1Origin.Hash,
+						Timestamp:    l2B0.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchUndecided,
+			ExpectedLog: "need more l1 blocks to check entire origins of bls batch",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "epoch too new",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C, l1D},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1D,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2B0.ParentHash,
+						EpochNum:     rollup.Epoch(l1C.Number), // invalid, we need to adopt epoch B before C
+						EpochHash:    l1C.Hash,
+						Timestamp:    l2B0.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch is for future epoch too far ahead, while it has the next timestamp, so it must be invalid",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "epoch hash wrong",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2B0.ParentHash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l1A.Hash, // invalid, epoch hash should be l1B
+						Timestamp:    l2B0.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch is for different L1 chain, epoch hash does not match",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "epoch hash wrong - long span",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // valid batch
+						ParentHash:   l2A3.ParentHash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l1A.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2B0.ParentHash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l1A.Hash, // invalid, epoch hash should be l1B
+						Timestamp:    l2B0.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch is for different L1 chain, epoch hash does not match",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "sequencer time drift on same epoch with non-empty txs",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // we build l2A4, which has a timestamp of 2*4 = 8 higher than l2A0
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "no sequencer time drift on same epoch with non-empty txs and Fjord",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // we build l2A4, which has a timestamp of 2*4 = 8 higher than l2A0
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:  BatchAccept,
+			ConfigMod: multiMod(deltaAtGenesis, fjordAt(&l1A.Time)),
+		},
+		{
+			Name:       "sequencer time drift on same epoch with non-empty txs - long span",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // valid batch
+						ParentHash:   l2A3.ParentHash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+					{ // we build l2A4, which has a timestamp of 2*4 = 8 higher than l2A0
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "sequencer time drift on changing epoch with non-empty txs",
+			L1Blocks:   []eth.L1BlockRef{l1X, l1Y, l1Z},
+			L2SafeHead: l2X0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1Z,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2Y0.ParentHash,
+						EpochNum:     rollup.Epoch(l2Y0.L1Origin.Number),
+						EpochHash:    l2Y0.L1Origin.Hash,
+						Timestamp:    l2Y0.Time, // valid, but more than 6 ahead of l1Y.Time
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "sequencer time drift on same epoch with empty txs and late next epoch",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1BLate},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1BLate,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // l2A4 time < l1BLate time, so we cannot adopt origin B yet
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:  BatchAccept, // accepted because empty & preserving L2 time invariant
+			ConfigMod: deltaAtGenesis,
+		},
+		{
+			Name:       "sequencer time drift on changing epoch with empty txs",
+			L1Blocks:   []eth.L1BlockRef{l1X, l1Y, l1Z},
+			L2SafeHead: l2X0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1Z,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2Y0.ParentHash,
+						EpochNum:     rollup.Epoch(l2Y0.L1Origin.Number),
+						EpochHash:    l2Y0.L1Origin.Hash,
+						Timestamp:    l2Y0.Time, // valid, but more than 6 ahead of l1Y.Time
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2Z0.ParentHash,
+						EpochNum:     rollup.Epoch(l2Z0.L1Origin.Number),
+						EpochHash:    l2Z0.L1Origin.Hash,
+						Timestamp:    l2Z0.Time, // valid, but more than 6 ahead of l1Y.Time
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:       BatchAccept, // accepted because empty & still advancing epoch
+			ConfigMod:      deltaAtGenesis,
+			NotExpectedLog: "continuing with empty batch before late L1 block to preserve L2 time invariant",
+		},
+		{
+			Name:       "sequencer time drift on same epoch with empty txs and no next epoch in sight yet",
+			L1Blocks:   []eth.L1BlockRef{l1A},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // we build l2A4, which has a timestamp of 2*4 = 8 higher than l2A0
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchUndecided, // we have to wait till the next epoch is in sight to check the time
+			ExpectedLog: "without the next L1 origin we cannot determine yet if this empty batch that exceeds the time drift is still valid",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "sequencer time drift on same epoch with empty txs and no next epoch in sight yet - long span",
+			L1Blocks:   []eth.L1BlockRef{l1A},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // valid batch
+						ParentHash:   l2A3.ParentHash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+					{ // we build l2A4, which has a timestamp of 2*4 = 8 higher than l2A0
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchUndecided, // we have to wait till the next epoch is in sight to check the time
+			ExpectedLog: "without the next L1 origin we cannot determine yet if this empty batch that exceeds the time drift is still valid",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "sequencer time drift on same epoch with empty txs and but in-sight epoch that invalidates it",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // we build l2A4, which has a timestamp of 2*4 = 8 higher than l2A0
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop, // dropped because it could have advanced the epoch to B
+			ExpectedLog: "batch exceeded sequencer time drift without adopting next origin, and next L1 origin would have been valid",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "sequencer time drift on same epoch with empty txs and but in-sight epoch that invalidates it - long span",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // valid batch
+						ParentHash:   l2A3.ParentHash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+					{ // we build l2A4, which has a timestamp of 2*4 = 8 higher than l2A0
+						ParentHash:   l2A4.ParentHash,
+						EpochNum:     rollup.Epoch(l2A4.L1Origin.Number),
+						EpochHash:    l2A4.L1Origin.Hash,
+						Timestamp:    l2A4.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop, // dropped because it could have advanced the epoch to B
+			ExpectedLog: "batch exceeded sequencer time drift without adopting next origin, and next L1 origin would have been valid",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "empty tx included",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash: l2A1.ParentHash,
+						EpochNum:   rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:  l2A1.L1Origin.Hash,
+						Timestamp:  l2A1.Time,
+						Transactions: []hexutil.Bytes{
+							[]byte{}, // empty tx data
+						},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "transaction data must not be empty, but found empty tx",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "valid batch same epoch",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.ParentHash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:  BatchAccept,
+			ConfigMod: deltaAtGenesis,
+		},
+		{
+			Name:       "valid batch changing epoch",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1C,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2B0.ParentHash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l2B0.L1Origin.Hash,
+						Timestamp:    l2B0.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:  BatchAccept,
+			ConfigMod: deltaAtGenesis,
+		},
+		{
+			Name:       "batch with L2 time before L1 time",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // we build l2B0, which starts a new epoch too early
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l2B0.L1Origin.Hash,
+						Timestamp:    l2A2.Time + defaultBlockTime,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "block timestamp is less than L1 origin timestamp",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "batch with L2 time before L1 time - long span",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B, l1C},
+			L2SafeHead: l2A1,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{ // valid batch
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: nil,
+					},
+					{ // we build l2B0, which starts a new epoch too early
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l2B0.L1Origin.Hash,
+						Timestamp:    l2A2.Time + defaultBlockTime,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "block timestamp is less than L1 origin timestamp",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "valid overlapping batch",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:  BatchAccept,
+			ConfigMod: deltaAtGenesis,
+		},
+		{
+			Name:       "longer overlapping batch",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A0.Hash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:  BatchAccept,
+			ConfigMod: deltaAtGenesis,
+		},
+		{
+			Name:       "fully overlapping batch",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A0.Hash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "bls batch has no new blocks after safe head",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "overlapping batch with invalid parent hash",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A0.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "ignoring batch with mismatching parent hash",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "overlapping batch with invalid origin number",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number) + 1,
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "overlapped block's L1 origin number does not match",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "overlapping batch with invalid tx",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A2,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+					{
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "overlapped block's tx count does not match",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "overlapping batch l2 fetcher error",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A1,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A0.ParentHash,
+						EpochNum:     rollup.Epoch(l2A0.L1Origin.Number),
+						EpochHash:    l2A0.L1Origin.Hash,
+						Timestamp:    l2A0.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A0.Hash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A2.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchUndecided,
+			ExpectedLog: "failed to fetch L2 block",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "short block time",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A0.Hash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A0.Time + 1,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A1.Time + 1,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch has misaligned timestamp, block time is too short",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "misaligned batch",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A0.Hash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A0.Time - 1,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A1.Hash,
+						EpochNum:     rollup.Epoch(l2A2.L1Origin.Number),
+						EpochHash:    l2A2.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchDrop,
+			ExpectedLog: "batch has misaligned timestamp, not overlapped exactly",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "failed to fetch overlapping block payload",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A3,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A2.Hash,
+						EpochNum:     rollup.Epoch(l2A3.L1Origin.Number),
+						EpochHash:    l2A3.L1Origin.Hash,
+						Timestamp:    l2A3.Time,
+						Transactions: nil,
+					},
+					{
+						ParentHash:   l2A3.Hash,
+						EpochNum:     rollup.Epoch(l2B0.L1Origin.Number),
+						EpochHash:    l2B0.L1Origin.Hash,
+						Timestamp:    l2B0.Time,
+						Transactions: nil,
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			Expected:    BatchUndecided,
+			ExpectedLog: "failed to fetch L2 block payload",
+			ConfigMod:   deltaAtGenesis,
+		},
+		{
+			Name:       "bls batch before hard fork",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.ParentHash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			ConfigMod:   deltaAt(&l1B.Time),
+			Expected:    BatchDrop,
+			ExpectedLog: "received BLSBatch with L1 origin before Delta hard fork",
+		},
+		{
+			Name:       "bls batch after hard fork",
+			L1Blocks:   []eth.L1BlockRef{l1A, l1B},
+			L2SafeHead: l2A0,
+			Batch: BatchWithL1InclusionBlock{
+				L1InclusionBlock: l1B,
+				Batch: initializedBLSBatch([]*SingularBatch{
+					{
+						ParentHash:   l2A1.ParentHash,
+						EpochNum:     rollup.Epoch(l2A1.L1Origin.Number),
+						EpochHash:    l2A1.L1Origin.Hash,
+						Timestamp:    l2A1.Time,
+						Transactions: []hexutil.Bytes{randTxData},
+					},
+				}, uint64(0), big.NewInt(0)),
+			},
+			ConfigMod: deltaAt(&l1A.Time),
+			Expected:  BatchAccept,
+		},
+	}
 	spanBatchTestCases := []ValidBatchTestCase{
 		{
 			Name:       "missing L1 info",
@@ -1611,6 +2507,12 @@ func TestValidBatch(t *testing.T) {
 	// Run span batch test cases
 	for _, testCase := range spanBatchTestCases {
 		t.Run("span_"+testCase.Name, func(t *testing.T) {
+			runTestCase(t, testCase)
+		})
+	}
+
+	for _, testCase := range blsBatchTestCases {
+		t.Run("bls_"+testCase.Name, func(t *testing.T) {
 			runTestCase(t, testCase)
 		})
 	}

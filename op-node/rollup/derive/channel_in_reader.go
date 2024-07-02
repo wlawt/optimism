@@ -112,6 +112,17 @@ func (cr *ChannelInReader) NextBatch(ctx context.Context) (Batch, error) {
 		batch.LogContext(cr.log).Debug("decoded span batch from channel", "stage_origin", cr.Origin())
 		cr.metrics.RecordDerivedBatches("span")
 		return batch, nil
+	case BLSBatchType:
+		if origin := cr.Origin(); !cr.cfg.IsDelta(origin.Time) {
+			return nil, NewTemporaryError(fmt.Errorf("cannot accept bls batch in L1 block %s at time %d", origin, origin.Time))
+		}
+		batch.Batch, err = DeriveBLSBatch(batchData, cr.cfg.BlockTime, cr.cfg.Genesis.L2Time, cr.cfg.L2ChainID)
+		if err != nil {
+			return nil, err
+		}
+		batch.LogContext(cr.log).Debug("decoded bls batch from channel", "stage_origin", cr.Origin())
+		cr.metrics.RecordDerivedBatches("bls")
+		return batch, nil
 	default:
 		// error is bubbled up to user, but pipeline can skip the batch and continue after.
 		return nil, NewTemporaryError(fmt.Errorf("unrecognized batch type: %d", batchData.GetBatchType()))

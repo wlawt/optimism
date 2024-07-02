@@ -40,6 +40,7 @@ type Batch interface {
 	LogContext(log.Logger) log.Logger
 	AsSingularBatch() (*SingularBatch, bool)
 	AsSpanBatch() (*SpanBatch, bool)
+	AsBLSBatch() (*BLSBatch, bool)
 }
 
 type batchWithMetadata struct {
