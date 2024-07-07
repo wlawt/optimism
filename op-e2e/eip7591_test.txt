@@ -1,0 +1,35 @@
+package op_e2e
+
+import (
+	"testing"
+
+	batcherFlags "github.com/ethereum-optimism/optimism/op-batcher/flags"
+	"github.com/ethereum-optimism/optimism/op-service/testlog"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/stretchr/testify/require"
+)
+
+func testSystem7591E2E(t *testing.T, multiBlob bool) {
+	InitParallel(t)
+
+	cfg := DefaultSystemConfig(t)
+	cfg.DataAvailabilityType = batcherFlags.BlobsType
+	const maxBlobs = 6
+
+	genesisActivation := hexutil.Uint64(0)
+	cfg.DeployConfig.L1CancunTimeOffset = &genesisActivation
+	cfg.DeployConfig.L2GenesisDeltaTimeOffset = &genesisActivation
+	cfg.DeployConfig.L2GenesisEcotoneTimeOffset = &genesisActivation
+
+	sys, err := cfg.Start(t)
+	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
+
+	log := testlog.Logger(t, log.LevelInfo)
+	log.Info("genesis", "l2", sys.RollupConfig.Genesis.L2, "l1", sys.RollupConfig.Genesis.L1, "l2_time", sys.RollupConfig.Genesis.L2Time)
+
+	l1Client := sys.Clients["l1"]
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
+}
