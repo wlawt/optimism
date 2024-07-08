@@ -115,7 +115,40 @@ func SendL2Tx(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, privKe
 	return receipt
 }
 
+func SendL2TxBLS(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, privKey *ecdsa.PrivateKey, applyTxOpts BLSTxOptsFn) *types.Receipt {
+	opts := blsTxOpts()
+	applyTxOpts(opts)
+	tx := types.MustSignNewTx(privKey, types.LatestSignerForChainID(cfg.L2ChainIDBig()), &types.BLSTx{
+		ChainID:   cfg.L2ChainIDBig(),
+		Nonce:     opts.Nonce, // Already have deposit
+		To:        opts.ToAddr,
+		Value:     opts.Value,
+		GasTipCap: opts.GasTipCap,
+		GasFeeCap: opts.GasFeeCap,
+		Gas:       opts.Gas,
+		Data:      opts.Data,
+		PublicKey: opts.PublicKey,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := l2Client.SendTransaction(ctx, tx)
+	require.NoError(t, err, "Sending L2 tx")
+
+	receipt, err := wait.ForReceiptOK(ctx, l2Client, tx.Hash())
+	require.NoError(t, err, "Waiting for L2 tx")
+	require.Equal(t, opts.ExpectedStatus, receipt.Status, "TX should have expected status")
+
+	for i, client := range opts.VerifyClients {
+		t.Logf("Waiting for tx %v on verification client %d", tx.Hash(), i)
+		receiptVerif, err := wait.ForReceiptOK(ctx, client, tx.Hash())
+		require.NoErrorf(t, err, "Waiting for L2 tx on verification client %d", i)
+		require.Equalf(t, receipt, receiptVerif, "Receipts should be the same on sequencer and verification client %d", i)
+	}
+	return receipt
+}
+
 type TxOptsFn func(opts *TxOpts)
+type BLSTxOptsFn func(opts *BLSTxOpts)
 
 type TxOpts struct {
 	ToAddr         *common.Address
@@ -129,9 +162,26 @@ type TxOpts struct {
 	VerifyClients  []*ethclient.Client
 }
 
+type BLSTxOpts struct {
+	ToAddr         *common.Address
+	Nonce          uint64
+	Value          *big.Int
+	Gas            uint64
+	GasTipCap      *big.Int
+	GasFeeCap      *big.Int
+	Data           []byte
+	ExpectedStatus uint64
+	VerifyClients  []*ethclient.Client
+	PublicKey      []byte
+}
+
 // VerifyOnClients adds additional l2 clients that should sync the block the tx is included in
 // Checks that the receipt received from these clients is equal to the receipt received from the sequencer
 func (o *TxOpts) VerifyOnClients(clients ...*ethclient.Client) {
+	o.VerifyClients = append(o.VerifyClients, clients...)
+}
+
+func (o *BLSTxOpts) VerifyOnClients(clients ...*ethclient.Client) {
 	o.VerifyClients = append(o.VerifyClients, clients...)
 }
 
@@ -157,4 +207,18 @@ func calcGasFees(gasUsed uint64, gasTipCap *big.Int, gasFeeCap *big.Int, baseFee
 		x = gasFeeCap
 	}
 	return x.Mul(x, new(big.Int).SetUint64(gasUsed))
+}
+
+func blsTxOpts() *BLSTxOpts {
+	return &BLSTxOpts{
+		ToAddr:         nil,
+		Nonce:          0,
+		Value:          common.Big0,
+		GasTipCap:      big.NewInt(10),
+		GasFeeCap:      big.NewInt(200),
+		Gas:            21_000,
+		Data:           nil,
+		ExpectedStatus: types.ReceiptStatusSuccessful,
+		PublicKey:      nil,
+	}
 }
