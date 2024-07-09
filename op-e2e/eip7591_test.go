@@ -3,6 +3,7 @@ package op_e2e
 import (
 	"context"
 	"math/big"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -11,11 +12,11 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/client"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
+	"github.com/ethereum-optimism/optimism/op-service/testutils"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/stretchr/testify/require"
@@ -41,41 +42,45 @@ func TestSystem7591E2E(t *testing.T) {
 	l2Seq := sys.Clients["sequencer"]
 	l2Verif := sys.Clients["verifier"]
 
-	/*
-		Generate BLS and ECDSA keys
-	*/
-	blsPrivKey, err := crypto.GenerateBLSKey()
-	require.NoError(t, err)
-
-	ethPrivKey, err := crypto.BLSToECDSA(blsPrivKey)
-	require.NoError(t, err)
-
-	fromAddr := crypto.PubkeyToAddress(ethPrivKey.PublicKey)
-	log.Info("john", "addr", fromAddr)
+	alicePriv := cfg.Secrets.Alice
+	aliceAddr := cfg.Secrets.Addresses().Alice
+	log.Info("alice", "addr", aliceAddr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	startBalance, err := l2Verif.BalanceAt(ctx, fromAddr, nil)
+	startBalanceAlice, err := l2Verif.BalanceAt(ctx, aliceAddr, nil)
 	require.NoError(t, err)
 
-	// Send deposit transaction
-	opts, err := bind.NewKeyedTransactorWithChainID(ethPrivKey, cfg.L1ChainIDBig())
+	aliceOpts, err := bind.NewKeyedTransactorWithChainID(alicePriv, cfg.L1ChainIDBig())
 	require.NoError(t, err)
 	mintAmount := big.NewInt(1_000_000_000_000)
-	opts.Value = mintAmount
-	SendDepositTx(t, cfg, l1Client, l2Verif, opts, func(l2Opts *DepositTxOpts) {})
+	aliceOpts.Value = mintAmount
+	SendDepositTx(t, cfg, l1Client, l2Verif, aliceOpts, func(l2Opts *DepositTxOpts) {})
 
-	// Confirm balance
 	ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	endBalance, err := wait.ForBalanceChange(ctx, l2Verif, fromAddr, startBalance)
+	endBalanceAlice, err := wait.ForBalanceChange(ctx, l2Verif, aliceAddr, startBalanceAlice)
 	require.NoError(t, err)
+	require.Equal(t, mintAmount, new(big.Int).Sub(endBalanceAlice, startBalanceAlice), "Did not get expected balance change")
 
-	diff := new(big.Int).Sub(endBalance, startBalance)
-	require.Equal(t, mintAmount, diff, "Did not get expected balance change")
+	_ = SendL2Tx(t, cfg, l2Seq, alicePriv, func(opts *TxOpts) {
+		opts.Value = big.NewInt(1_000_000_000)
+		opts.Nonce = 1 // Already have deposit
+		opts.ToAddr = &cfg.Secrets.Addresses().John
+		// put some random data in the tx to make it fill up 6 blobs (multi-blob case)
+		opts.Data = testutils.RandomData(rand.New(rand.NewSource(420)), 400)
+		opts.Gas, err = core.IntrinsicGas(opts.Data, nil, false, true, true, false)
+		require.NoError(t, err)
+		opts.VerifyOnClients(l2Verif)
+	})
+
+	johnBLS := cfg.Secrets.JohnBLS
+	johnPriv := cfg.Secrets.John
+	johnAddr := cfg.Secrets.Addresses().John
+	log.Info("john", "addr", johnAddr)
 
 	// Submit TX to L2 sequencer node
-	receipt := SendL2TxBLS(t, cfg, l2Seq, ethPrivKey, func(opts *BLSTxOpts) {
+	receipt := SendL2TxBLS(t, cfg, l2Seq, johnPriv, func(opts *BLSTxOpts) {
 		opts.Value = big.NewInt(1_000_000_000)
 		opts.Nonce = 1 // Already have deposit
 		opts.ToAddr = &common.Address{0xff, 0xff}
@@ -83,7 +88,7 @@ func TestSystem7591E2E(t *testing.T) {
 		opts.Gas, err = core.IntrinsicGas(opts.Data, nil, false, true, true, false)
 		require.NoError(t, err)
 		opts.VerifyOnClients(l2Verif)
-		opts.PublicKey = blsPrivKey.PublicKey().Marshal()
+		opts.PublicKey = johnBLS.PublicKey().Marshal()
 	})
 
 	// Verify blocks match after batch submission on verifiers and sequencers

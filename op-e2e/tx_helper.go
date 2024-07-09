@@ -118,7 +118,7 @@ func SendL2Tx(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, privKe
 func SendL2TxBLS(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, privKey *ecdsa.PrivateKey, applyTxOpts BLSTxOptsFn) *types.Receipt {
 	opts := blsTxOpts()
 	applyTxOpts(opts)
-	tx := types.MustSignNewTx(privKey, types.LatestSignerForChainID(cfg.L2ChainIDBig()), &types.BLSTx{
+	tx := types.MustSignNewTx(privKey, types.NewBLSSigner(cfg.L2ChainIDBig()), &types.BLSTx{
 		ChainID:   cfg.L2ChainIDBig(),
 		Nonce:     opts.Nonce, // Already have deposit
 		To:        opts.ToAddr,
