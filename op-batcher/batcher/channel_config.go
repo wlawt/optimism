@@ -97,7 +97,7 @@ func (cc *ChannelConfig) Check() error {
 			cc.MaxFrameSize, derive.FrameV0OverHeadSize)
 	}
 
-	if cc.BatchType > derive.SpanBatchType {
+	if cc.BatchType > derive.BLSBatchType {
 		return fmt.Errorf("unrecognized batch type: %d", cc.BatchType)
 	}
 
