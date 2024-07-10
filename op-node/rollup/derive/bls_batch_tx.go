@@ -105,6 +105,41 @@ func (tx *blsBatchTx) convertToFullTx(nonce, gas uint64, to *common.Address, cha
 			AccessList: batchTxInner.AccessList,
 			PublicKey:  batchTxInner.PublicKey,
 		}
+	case types.LegacyTxType:
+		batchTxInner := tx.inner.(*spanBatchLegacyTxData)
+		inner = &types.LegacyTx{
+			Nonce:    nonce,
+			GasPrice: batchTxInner.GasPrice,
+			Gas:      gas,
+			To:       to,
+			Value:    batchTxInner.Value,
+			Data:     batchTxInner.Data,
+		}
+	case types.AccessListTxType:
+		batchTxInner := tx.inner.(*spanBatchAccessListTxData)
+		inner = &types.AccessListTx{
+			ChainID:    chainID,
+			Nonce:      nonce,
+			GasPrice:   batchTxInner.GasPrice,
+			Gas:        gas,
+			To:         to,
+			Value:      batchTxInner.Value,
+			Data:       batchTxInner.Data,
+			AccessList: batchTxInner.AccessList,
+		}
+	case types.DynamicFeeTxType:
+		batchTxInner := tx.inner.(*spanBatchDynamicFeeTxData)
+		inner = &types.DynamicFeeTx{
+			ChainID:    chainID,
+			Nonce:      nonce,
+			GasTipCap:  batchTxInner.GasTipCap,
+			GasFeeCap:  batchTxInner.GasFeeCap,
+			Gas:        gas,
+			To:         to,
+			Value:      batchTxInner.Value,
+			Data:       batchTxInner.Data,
+			AccessList: batchTxInner.AccessList,
+		}
 	default:
 		return nil, fmt.Errorf("invalid tx type: %d", tx.Type())
 	}
@@ -123,6 +158,27 @@ func newBLSBatchTx(tx types.Transaction) (*blsBatchTx, error) {
 			Data:       tx.Data(),
 			AccessList: tx.AccessList(),
 			PublicKey:  tx.PublicKey(),
+		}
+	case types.LegacyTxType:
+		inner = &spanBatchLegacyTxData{
+			GasPrice: tx.GasPrice(),
+			Value:    tx.Value(),
+			Data:     tx.Data(),
+		}
+	case types.AccessListTxType:
+		inner = &spanBatchAccessListTxData{
+			GasPrice:   tx.GasPrice(),
+			Value:      tx.Value(),
+			Data:       tx.Data(),
+			AccessList: tx.AccessList(),
+		}
+	case types.DynamicFeeTxType:
+		inner = &spanBatchDynamicFeeTxData{
+			GasTipCap:  tx.GasTipCap(),
+			GasFeeCap:  tx.GasFeeCap(),
+			Value:      tx.Value(),
+			Data:       tx.Data(),
+			AccessList: tx.AccessList(),
 		}
 	default:
 		return nil, fmt.Errorf("invalid tx type: %d", tx.Type())

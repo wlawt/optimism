@@ -357,7 +357,7 @@ func BLSChannelAndBatches(t *testing.T, target uint64, len int, algo Compression
 	return cout, batches
 }
 
-func TestSpanChannelOut(t *testing.T) {
+func TestSpanAndBLSChannelOut(t *testing.T) {
 	tests := []struct {
 		name string
 		f    func(t *testing.T, algo CompressionAlgo)
@@ -366,7 +366,7 @@ func TestSpanChannelOut(t *testing.T) {
 		{"SpanChannelOutCompressionUndo", SpanChannelOutCompressionUndo},
 		{"SpanChannelOutClose", SpanChannelOutClose},
 		{"BLSChannelOutCompressionOnlyOneBatch", BLSChannelOutCompressionOnlyOneBatch},
-		// TODO: fix BLSChannelOutCompressionOnlyOneBatch and BLSChannelOutClose
+		{"BLSChannelOutClose", BLSChannelOutClose},
 	}
 	for _, test := range tests {
 		test := test
@@ -452,6 +452,25 @@ func SpanChannelOutClose(t *testing.T, algo CompressionAlgo) {
 	} else {
 		require.Equal(t, 1, cout.compressor.Len()) // 1 because of brotli channel version
 	}
+
+	// confirm the RLP length is less than the target
+	rlpLen := cout.activeRLP().Len()
+	require.Less(t, uint64(rlpLen), target)
+
+	// close the channel
+	require.NoError(t, cout.Close())
+
+	// confirm that the only batch was compressed, and that the RLP did not change
+	require.Greater(t, cout.compressor.Len(), 0)
+	require.Equal(t, rlpLen, cout.activeRLP().Len())
+}
+
+func BLSChannelOutClose(t *testing.T, algo CompressionAlgo) {
+	target := uint64(1200)
+	cout, singularBatches := BLSChannelAndBatches(t, target, 1, algo)
+
+	err := cout.AddSingularBatch(singularBatches[0], 0)
+	require.NoError(t, err)
 
 	// confirm the RLP length is less than the target
 	rlpLen := cout.activeRLP().Len()
