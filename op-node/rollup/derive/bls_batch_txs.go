@@ -114,11 +114,7 @@ func (btx *blsBatchTxs) encodeTxSigsRS(w io.Writer) error {
 		return fmt.Errorf("cannot write number of non-BLS sigs: %w", err)
 	}
 
-	for i, txSig := range btx.txSigs {
-		if btx.txTypes[i] != types.BLSTxType {
-			txSig.r = nil
-			txSig.s = nil
-		}
+	for _, txSig := range btx.txSigs {
 		rBuf := txSig.r.Bytes32()
 		if _, err := w.Write(rBuf[:]); err != nil {
 			return fmt.Errorf("cannot write tx sig r: %w", err)
@@ -172,7 +168,7 @@ func (btx *blsBatchTxs) encodeTxDatas(w io.Writer) error {
 }
 
 func (btx *blsBatchTxs) decodeTxSigsRS(r *bytes.Reader) error {
-	var txSigs []spanBatchSignature
+	txSigs := []spanBatchSignature{}
 	var sigBuffer [32]byte
 
 	encSigs, err := binary.ReadUvarint(r)
@@ -192,7 +188,6 @@ func (btx *blsBatchTxs) decodeTxSigsRS(r *bytes.Reader) error {
 			return fmt.Errorf("failed to read tx sig s: %w", err)
 		}
 		txSig.s, _ = uint256.FromBig(new(big.Int).SetBytes(sigBuffer[:]))
-		txSigs = append(txSigs, txSig)
 	}
 	btx.txSigs = txSigs
 	return nil
@@ -225,7 +220,7 @@ func (btx *blsBatchTxs) decodeTxGases(r *bytes.Reader) error {
 }
 
 func (btx *blsBatchTxs) decodeTxTos(r *bytes.Reader) error {
-	var txTos []common.Address
+	txTos := []common.Address{}
 	txToBuffer := make([]byte, common.AddressLength)
 	contractCreationCount, err := btx.contractCreationCount()
 	if err != nil {
@@ -456,6 +451,7 @@ func (sbtx *blsBatchTxs) AddTxs(txs [][]byte, chainID *big.Int) error {
 			if err != nil {
 				return err
 			}
+			fmt.Printf("ypartity %v\n", yParityBit)
 			sbtx.yParityBits.SetBit(sbtx.yParityBits, idx+int(offset), yParityBit)
 			sbtx.txNonces = append(sbtx.txNonces, tx.Nonce())
 			sbtx.txGases = append(sbtx.txGases, tx.Gas())

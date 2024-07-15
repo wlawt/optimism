@@ -78,6 +78,77 @@ func TestBLSBatchTxsContractCreationCount(t *testing.T) {
 	require.Equal(t, contractCreationCount, contractCreationCount2)
 }
 
+func TestBLSBatchTxsYParityBits(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x7331))
+	chainID := big.NewInt(rng.Int63n(1000))
+
+	rawBLSBatch := RandomRawBLSBatch(rng, chainID)
+	yParityBits := rawBLSBatch.txs.yParityBits
+	totalBlockTxCount := rawBLSBatch.txs.totalBlockTxCount
+
+	var sbt blsBatchTxs
+	sbt.yParityBits = yParityBits
+	sbt.totalBlockTxCount = totalBlockTxCount
+
+	var buf bytes.Buffer
+	err := sbt.encodeYParityBits(&buf)
+	require.NoError(t, err)
+
+	// yParityBit field is fixed length: single bit
+	yParityBitBufferLen := totalBlockTxCount / 8
+	if totalBlockTxCount%8 != 0 {
+		yParityBitBufferLen++
+	}
+	require.Equal(t, buf.Len(), int(yParityBitBufferLen))
+
+	result := buf.Bytes()
+	sbt.yParityBits = nil
+
+	r := bytes.NewReader(result)
+	err = sbt.decodeYParityBits(r)
+	require.NoError(t, err)
+
+	require.Equal(t, yParityBits, sbt.yParityBits)
+}
+
+func TestBLSBatchTxsProtectedBits(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x7331))
+	chainID := big.NewInt(rng.Int63n(1000))
+
+	rawBLSBatch := RandomRawBLSBatch(rng, chainID)
+	protectedBits := rawBLSBatch.txs.protectedBits
+	txTypes := rawBLSBatch.txs.txTypes
+	totalBlockTxCount := rawBLSBatch.txs.totalBlockTxCount
+	totalLegacyTxCount := rawBLSBatch.txs.totalLegacyTxCount
+
+	var sbt blsBatchTxs
+	sbt.protectedBits = protectedBits
+	sbt.totalBlockTxCount = totalBlockTxCount
+	sbt.txTypes = txTypes
+	sbt.totalLegacyTxCount = totalLegacyTxCount
+
+	var buf bytes.Buffer
+	err := sbt.encodeProtectedBits(&buf)
+	require.NoError(t, err)
+
+	// protectedBit field is fixed length: single bit
+	protectedBitBufferLen := totalLegacyTxCount / 8
+	require.NoError(t, err)
+	if totalLegacyTxCount%8 != 0 {
+		protectedBitBufferLen++
+	}
+	require.Equal(t, buf.Len(), int(protectedBitBufferLen))
+
+	result := buf.Bytes()
+	sbt.protectedBits = nil
+
+	r := bytes.NewReader(result)
+	err = sbt.decodeProtectedBits(r)
+	require.NoError(t, err)
+
+	require.Equal(t, protectedBits, sbt.protectedBits)
+}
+
 func TestBLSBatchTxsTxNonces(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x123456))
 	chainID := big.NewInt(rng.Int63n(1000))

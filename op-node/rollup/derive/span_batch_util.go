@@ -22,7 +22,7 @@ func decodeSpanBatchBits(r *bytes.Reader, bitLength uint64) (*big.Int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bits: %w", err)
 	}
-	out := new(big.Int)
+	out := big.NewInt(0)
 	out.SetBytes(buf)
 	// We read the correct number of bytes, but there may still be trailing bits
 	if l := uint64(out.BitLen()); l > bitLength {
