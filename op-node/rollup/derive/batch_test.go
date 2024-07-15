@@ -45,7 +45,7 @@ func RandomRawBLSBatch(rng *rand.Rand, chainId *big.Int) *RawBLSBatch {
 	londonSigner := types.NewLondonSigner(chainId)
 	for i := 0; i < int(totalblockTxCounts); i++ {
 		var tx *types.Transaction
-		switch i % 4 {
+		switch i % 5 {
 		case 0:
 			tx = testutils.RandomLegacyTx(rng, types.HomesteadSigner{})
 		case 1:
