@@ -102,7 +102,23 @@ func (btx *blsBatchTxs) decodeYParityBits(r *bytes.Reader) error {
 }
 
 func (btx *blsBatchTxs) encodeTxSigsRS(w io.Writer) error {
-	for _, txSig := range btx.txSigs {
+	var buf [binary.MaxVarintLen64]byte
+	numSigs := 0
+	for _, txType := range btx.txTypes {
+		if txType != types.BLSTxType {
+			numSigs += 1
+		}
+	}
+	n := binary.PutUvarint(buf[:], uint64(numSigs))
+	if _, err := w.Write(buf[:n]); err != nil {
+		return fmt.Errorf("cannot write number of non-BLS sigs: %w", err)
+	}
+
+	for i, txSig := range btx.txSigs {
+		if btx.txTypes[i] != types.BLSTxType {
+			txSig.r = nil
+			txSig.s = nil
+		}
 		rBuf := txSig.r.Bytes32()
 		if _, err := w.Write(rBuf[:]); err != nil {
 			return fmt.Errorf("cannot write tx sig r: %w", err)
@@ -158,7 +174,13 @@ func (btx *blsBatchTxs) encodeTxDatas(w io.Writer) error {
 func (btx *blsBatchTxs) decodeTxSigsRS(r *bytes.Reader) error {
 	var txSigs []spanBatchSignature
 	var sigBuffer [32]byte
-	for i := 0; i < int(btx.totalBlockTxCount); i++ {
+
+	encSigs, err := binary.ReadUvarint(r)
+	if err != nil {
+		return fmt.Errorf("failed to read num non-BLS sigs: %w", err)
+	}
+
+	for i := 0; i < int(encSigs); i++ {
 		var txSig spanBatchSignature
 		_, err := io.ReadFull(r, sigBuffer[:])
 		if err != nil {
