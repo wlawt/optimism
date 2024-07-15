@@ -451,7 +451,6 @@ func (sbtx *blsBatchTxs) AddTxs(txs [][]byte, chainID *big.Int) error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("ypartity %v\n", yParityBit)
 			sbtx.yParityBits.SetBit(sbtx.yParityBits, idx+int(offset), yParityBit)
 			sbtx.txNonces = append(sbtx.txNonces, tx.Nonce())
 			sbtx.txGases = append(sbtx.txGases, tx.Gas())

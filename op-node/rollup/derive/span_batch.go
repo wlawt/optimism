@@ -659,7 +659,6 @@ func ReadTxData(r *bytes.Reader) ([]byte, int, error) {
 		}
 	}
 	// avoid out of memory before allocation
-	fmt.Printf("txType: %v\n", txType)
 	s := rlp.NewStream(r, MaxSpanBatchElementCount)
 	var txPayload []byte
 	kind, _, err := s.Kind()
