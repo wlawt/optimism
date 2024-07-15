@@ -674,7 +674,7 @@ func TestSystemMockP2P(t *testing.T) {
 
 	// Submit TX to L2 sequencer node
 	receiptSeq := SendL2Tx(t, cfg, l2Seq, ethPrivKey, func(opts *TxOpts) {
-		opts.ToAddr = &common.Address{0xff, 0xff}
+		opts.ToAddr = &cfg.Secrets.Addresses().John
 		opts.Value = big.NewInt(1_000_000_000)
 
 		// Wait until the block it was first included in shows up in the safe chain on the verifier
@@ -687,6 +687,19 @@ func TestSystemMockP2P(t *testing.T) {
 
 	// Verify that the tx was received via p2p
 	require.Contains(t, received, receiptSeq.BlockHash)
+
+	johnBLS := cfg.Secrets.JohnBLS
+	johnPriv := cfg.Secrets.John
+	johnAddr := cfg.Secrets.Addresses().John
+	log.Info("john", "addr", johnAddr)
+	_ = SendL2TxBLS(t, cfg, l2Seq, johnPriv, func(opts *BLSTxOpts) {
+		opts.ToAddr = &common.Address{0xff, 0xff}
+		opts.Value = big.NewInt(1_000_000_000)
+
+		// Wait until the block it was first included in shows up in the safe chain on the verifier
+		opts.VerifyOnClients(l2Verif)
+		opts.PublicKey = johnBLS.PublicKey().Marshal()
+	})
 }
 
 func TestSystemP2PAltSync(t *testing.T) {

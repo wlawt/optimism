@@ -68,6 +68,9 @@ func (cr *ChannelInReader) NextBatch(ctx context.Context) (Batch, error) {
 		if data, err := cr.prev.NextData(ctx); err == io.EOF {
 			return nil, io.EOF
 		} else if err != nil {
+			if err.Error() != "EOF" && err.Error() != "not enough data" {
+				return nil, err
+			}
 			return nil, err
 		} else {
 			if err := cr.WriteChannel(data); err != nil {

@@ -24,7 +24,7 @@ import (
 )
 
 func RandomRawBLSBatch(rng *rand.Rand, chainId *big.Int) *RawBLSBatch {
-	blockCount := uint64(4 + rng.Int()&0xFF) // at least 4
+	blockCount := uint64(5 + rng.Int()&0xFF) // at least 4
 	originBits := new(big.Int)
 	for i := 0; i < int(blockCount); i++ {
 		bit := uint(0)
@@ -42,49 +42,63 @@ func RandomRawBLSBatch(rng *rand.Rand, chainId *big.Int) *RawBLSBatch {
 	}
 	var txs [][]byte
 	var sigs []bls.Signature
+	londonSigner := types.NewLondonSigner(chainId)
 	for i := 0; i < int(totalblockTxCounts); i++ {
 		var tx *types.Transaction
-		blsSigner := types.NewBLSSigner(chainId)
+		switch i % 4 {
+		case 0:
+			tx = testutils.RandomLegacyTx(rng, types.HomesteadSigner{})
+		case 1:
+			tx = testutils.RandomLegacyTx(rng, londonSigner)
+		case 2:
+			tx = testutils.RandomAccessListTx(rng, londonSigner)
+		case 3:
+			tx = testutils.RandomDynamicFeeTx(rng, londonSigner)
+		case 4:
+			blsSigner := types.NewBLSSigner(chainId)
 
-		blsKey, _ := crypto.GenerateBLSKey()
-		ecdsaPrivKey, err := crypto.BLSToECDSA(blsKey)
-		if err != nil {
-			panic(err)
+			blsKey, _ := crypto.GenerateBLSKey()
+			ecdsaPrivKey, err := crypto.BLSToECDSA(blsKey)
+			if err != nil {
+				panic(err)
+			}
+			baseFee := new(big.Int).SetUint64(rng.Uint64())
+			tip := big.NewInt(rng.Int63n(10 * params.GWei))
+			txData := &types.BLSTx{
+				ChainID:    blsSigner.ChainID(),
+				Nonce:      rng.Uint64(),
+				GasTipCap:  tip,
+				GasFeeCap:  new(big.Int).Add(baseFee, tip),
+				Gas:        params.TxGas + uint64(rng.Int63n(2_000_000)),
+				To:         testutils.RandomTo(rng),
+				Value:      testutils.RandomETH(rng, 10),
+				Data:       testutils.RandomData(rng, rng.Intn(testutils.RandomDataSize)),
+				AccessList: nil,
+				PublicKey:  blsKey.PublicKey().Marshal(),
+			}
+			tx, err = types.SignNewTx(ecdsaPrivKey, blsSigner, txData)
+			if err != nil {
+				panic(err)
+			}
+			sig := blsKey.Sign(tx.Hash().Bytes()).Marshal()
+			tx.SetSignature(sig)
+			s, err := blst.SignatureFromBytes(tx.Signature())
+			if err != nil {
+				panic(err)
+			}
+			sigs = append(sigs, s)
+			tx.SetSignature(nil)
 		}
-		baseFee := new(big.Int).SetUint64(rng.Uint64())
-		tip := big.NewInt(rng.Int63n(10 * params.GWei))
-		txData := &types.BLSTx{
-			ChainID:    blsSigner.ChainID(),
-			Nonce:      rng.Uint64(),
-			GasTipCap:  tip,
-			GasFeeCap:  new(big.Int).Add(baseFee, tip),
-			Gas:        params.TxGas + uint64(rng.Int63n(2_000_000)),
-			To:         testutils.RandomTo(rng),
-			Value:      testutils.RandomETH(rng, 10),
-			Data:       testutils.RandomData(rng, rng.Intn(testutils.RandomDataSize)),
-			AccessList: nil,
-			PublicKey:  blsKey.PublicKey().Marshal(),
-		}
-		tx, err = types.SignNewTx(ecdsaPrivKey, blsSigner, txData)
-		if err != nil {
-			panic(err)
-		}
-		sig := blsKey.Sign(tx.Hash().Bytes()).Marshal()
-		tx.SetSignature(sig)
-
-		s, err := blst.SignatureFromBytes(tx.Signature())
-		if err != nil {
-			panic(err)
-		}
-		sigs = append(sigs, s)
-		tx.SetSignature(nil)
 		rawTx, err := tx.MarshalBinary()
 		if err != nil {
 			panic("MarshalBinary:" + err.Error())
 		}
 		txs = append(txs, rawTx)
 	}
-	aggSig := blst.AggregateSignatures(sigs).Marshal()
+	var aggSig []byte
+	if len(sigs) != 0 {
+		aggSig = blst.AggregateSignatures(sigs).Marshal()
+	}
 
 	blsBatchTxs, err := newBLSBatchTxs(txs, chainId)
 	if err != nil {

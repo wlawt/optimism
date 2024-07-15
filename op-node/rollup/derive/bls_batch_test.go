@@ -242,6 +242,9 @@ func TestBLSBatchPayload(t *testing.T) {
 	err = sb.decodePayload(r)
 	require.NoError(t, err)
 
+	err = sb.txs.recoverV(chainID)
+	require.NoError(t, err)
+
 	require.Equal(t, rawBLSBatch.blsBatchPayload, sb.blsBatchPayload)
 }
 

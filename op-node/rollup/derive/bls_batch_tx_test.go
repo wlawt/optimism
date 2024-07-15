@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ethereum-optimism/optimism/op-service/testutils"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func TestBLSBatchTxConvert(t *testing.T) {
 				blstx, err := newBLSBatchTx(*tx)
 				require.NoError(t, err)
 
-				tx2, err := blstx.convertToFullTx(tx.Nonce(), tx.Gas(), tx.To(), chainID)
+				tx2, err := blstx.convertToFullTx(tx.Nonce(), tx.Gas(), tx.To(), chainID, common.Big0, common.Big0, common.Big0)
 				require.NoError(t, err)
 
 				// compare after marshal because we only need inner field of transaction
@@ -92,7 +93,7 @@ func TestBLSBatchTxInvalidTxType(t *testing.T) {
 
 	var blstx blsBatchTx
 	blstx.inner = &blsBatchDummyTxData{}
-	_, err = blstx.convertToFullTx(0, 0, nil, nil)
+	_, err = blstx.convertToFullTx(0, 0, nil, nil, common.Big0, common.Big0, common.Big0)
 	require.ErrorContains(t, err, "invalid tx type")
 }
 

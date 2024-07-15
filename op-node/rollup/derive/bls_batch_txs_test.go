@@ -248,6 +248,10 @@ func TestBLSBatchTxsRoundTripFullTxs(t *testing.T) {
 
 	cases := []txTypeTest{
 		{"bls fee tx", testutils.RandomBLSTx, types.NewBLSSigner(chainID)},
+		{"unprotected legacy tx", testutils.RandomLegacyTx, types.NewLondonSigner(chainID)},
+		{"legacy tx", testutils.RandomLegacyTx, types.NewLondonSigner(chainID)},
+		{"access list tx", testutils.RandomAccessListTx, types.NewLondonSigner(chainID)},
+		{"dynamic fee tx", testutils.RandomDynamicFeeTx, types.NewLondonSigner(chainID)},
 	}
 
 	for _, testCase := range cases {
@@ -279,6 +283,10 @@ func TestBLSBatchTxsFullTxNotEnoughTxTos(t *testing.T) {
 
 	cases := []txTypeTest{
 		{"bls fee tx", testutils.RandomBLSTx, types.NewBLSSigner(chainID)},
+		{"unprotected legacy tx", testutils.RandomLegacyTx, types.NewLondonSigner(chainID)},
+		{"legacy tx", testutils.RandomLegacyTx, types.NewLondonSigner(chainID)},
+		{"access list tx", testutils.RandomAccessListTx, types.NewLondonSigner(chainID)},
+		{"dynamic fee tx", testutils.RandomDynamicFeeTx, types.NewLondonSigner(chainID)},
 	}
 
 	for _, testCase := range cases {
