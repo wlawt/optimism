@@ -82,7 +82,7 @@ func TestSystem7591E2E(t *testing.T) {
 	// Submit TX to L2 sequencer node
 	receipt := SendL2TxBLS(t, cfg, l2Seq, johnPriv, func(opts *BLSTxOpts) {
 		opts.Value = big.NewInt(1_000_000)
-		opts.Nonce = 7 // TODO: get nonce from RPC calls
+		opts.Nonce = 0
 		opts.ToAddr = &common.Address{0xff, 0xff}
 		opts.Data = nil
 		opts.Gas, err = core.IntrinsicGas(opts.Data, nil, false, true, true, false)

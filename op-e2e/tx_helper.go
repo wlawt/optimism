@@ -134,6 +134,7 @@ func SendL2TxBLS(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, pri
 	err := l2Client.SendTransaction(ctx, tx)
 	require.NoError(t, err, "Sending L2 BLS tx")
 
+	require.NotNil(t, tx.Hash())
 	receipt, err := wait.ForReceiptOK(ctx, l2Client, tx.Hash())
 	require.NoError(t, err, "Waiting for L2 BLS tx")
 	require.Equal(t, opts.ExpectedStatus, receipt.Status, "TX should have expected status")
