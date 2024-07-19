@@ -21,6 +21,10 @@ type blsBatchTxTest struct {
 
 func TestBLSBatchTxConvert(t *testing.T) {
 	cases := []blsBatchTxTest{
+		{"unprotected legacy tx", 32, testutils.RandomLegacyTx, false},
+		{"legacy tx", 32, testutils.RandomLegacyTx, true},
+		{"access list tx", 32, testutils.RandomAccessListTx, true},
+		{"dynamic fee tx", 32, testutils.RandomDynamicFeeTx, true},
 		{"bls fee tx", 32, testutils.RandomBLSTx, true},
 	}
 
@@ -29,6 +33,12 @@ func TestBLSBatchTxConvert(t *testing.T) {
 			rng := rand.New(rand.NewSource(int64(0x1331 + i)))
 			chainID := big.NewInt(rng.Int63n(1000))
 			signer := types.NewBLSSigner(chainID)
+			if testCase.name != "bls fee tx" {
+				signer = types.NewLondonSigner(chainID)
+				if !testCase.protected {
+					signer = types.HomesteadSigner{}
+				}
+			}
 
 			for txIdx := 0; txIdx < testCase.trials; txIdx++ {
 				tx := testCase.mkTx(rng, signer)
@@ -36,7 +46,8 @@ func TestBLSBatchTxConvert(t *testing.T) {
 				blstx, err := newBLSBatchTx(*tx)
 				require.NoError(t, err)
 
-				tx2, err := blstx.convertToFullTx(tx.Nonce(), tx.Gas(), tx.To(), chainID, common.Big0, common.Big0, common.Big0)
+				v, r, s := tx.RawSignatureValues()
+				tx2, err := blstx.convertToFullTx(tx.Nonce(), tx.Gas(), tx.To(), chainID, v, r, s)
 				require.NoError(t, err)
 
 				// compare after marshal because we only need inner field of transaction
@@ -53,6 +64,10 @@ func TestBLSBatchTxConvert(t *testing.T) {
 
 func TestBLSBatchTxRoundTrip(t *testing.T) {
 	cases := []blsBatchTxTest{
+		{"unprotected legacy tx", 32, testutils.RandomLegacyTx, false},
+		{"legacy tx", 32, testutils.RandomLegacyTx, true},
+		{"access list tx", 32, testutils.RandomAccessListTx, true},
+		{"dynamic fee tx", 32, testutils.RandomDynamicFeeTx, true},
 		{"bls fee tx", 32, testutils.RandomBLSTx, true},
 	}
 
@@ -61,6 +76,12 @@ func TestBLSBatchTxRoundTrip(t *testing.T) {
 			rng := rand.New(rand.NewSource(int64(0x1332 + i)))
 			chainID := big.NewInt(rng.Int63n(1000))
 			signer := types.NewBLSSigner(chainID)
+			if testCase.name != "bls fee tx" {
+				signer = types.NewLondonSigner(chainID)
+				if !testCase.protected {
+					signer = types.HomesteadSigner{}
+				}
+			}
 
 			for txIdx := 0; txIdx < testCase.trials; txIdx++ {
 				tx := testCase.mkTx(rng, signer)

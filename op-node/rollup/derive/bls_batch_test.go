@@ -307,6 +307,9 @@ func TestBLSBatchTxs(t *testing.T) {
 	err = sb.decodeTxs(r)
 	require.NoError(t, err)
 
+	err = sb.txs.recoverV(chainID)
+	require.NoError(t, err)
+
 	require.Equal(t, rawBLSBatch.txs, sb.txs)
 }
 
@@ -322,6 +325,9 @@ func TestBLSBatchRoundTrip(t *testing.T) {
 
 	var sb RawBLSBatch
 	err = sb.decode(bytes.NewReader(result.Bytes()))
+	require.NoError(t, err)
+
+	err = sb.txs.recoverV(chainID)
 	require.NoError(t, err)
 
 	require.Equal(t, rawBLSBatch, &sb)
@@ -363,6 +369,26 @@ func TestBLSBatchDerive(t *testing.T) {
 			require.Equal(t, singularBatches[i].Transactions, spanBatchDerived.Batches[i].Transactions)
 		}
 	}
+}
+
+func TestBLSBatchAppend(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x44337711))
+
+	chainID := new(big.Int).SetUint64(rng.Uint64())
+
+	singularBatches := RandomValidConsecutiveSingularBLSBatches(rng, chainID)
+	// initialize empty span batch
+	blsBatch := initializedBLSBatch([]*SingularBatch{}, uint64(0), chainID)
+
+	L := 2
+	for i := 0; i < L; i++ {
+		err := blsBatch.AppendSingularBatch(singularBatches[i], uint64(i))
+		require.NoError(t, err)
+	}
+	// initialize with two singular batches
+	blsBatch2 := initializedBLSBatch(singularBatches[:L], uint64(0), chainID)
+
+	require.Equal(t, blsBatch, blsBatch2)
 }
 
 func TestBLSBatchMerge(t *testing.T) {
@@ -410,8 +436,48 @@ func TestBLSBatchMerge(t *testing.T) {
 	}
 }
 
+func TestBLSBatchToSingularBatch(t *testing.T) {
+	rng := rand.New(rand.NewSource(0xbab0bab1))
+	chainID := new(big.Int).SetUint64(rng.Uint64())
+
+	for originChangedBit := 0; originChangedBit < 2; originChangedBit++ {
+		singularBatches := RandomValidConsecutiveSingularBLSBatches(rng, chainID)
+		safeL2Head := testutils.RandomL2BlockRef(rng)
+		safeL2Head.Hash = common.BytesToHash(singularBatches[0].ParentHash[:])
+		safeL2Head.Time = singularBatches[0].Timestamp - 2
+		genesisTimeStamp := 1 + singularBatches[0].Timestamp - 128
+
+		blsBatch := initializedBLSBatch(singularBatches, genesisTimeStamp, chainID)
+		// set originChangedBit to match the original test implementation
+		blsBatch.setFirstOriginChangedBit(uint(originChangedBit))
+		rawBLSBatch, err := blsBatch.ToRawBLSBatch()
+		require.NoError(t, err)
+
+		l1Origins := mockL1OriginBLS(rng, rawBLSBatch, singularBatches)
+
+		singularBatches2, err := blsBatch.GetSingularBatches(l1Origins, safeL2Head)
+		require.NoError(t, err)
+
+		// GetSingularBatches does not fill in parent hash of singular batches
+		// empty out parent hash for comparison
+		for i := 0; i < len(singularBatches); i++ {
+			singularBatches[i].ParentHash = common.Hash{}
+		}
+		// check parent hash is empty
+		for i := 0; i < len(singularBatches2); i++ {
+			require.Equal(t, singularBatches2[i].ParentHash, common.Hash{})
+		}
+
+		require.Equal(t, singularBatches, singularBatches2)
+	}
+}
+
 func TestBLSBatchReadTxData(t *testing.T) {
 	cases := []spanBatchTxTest{
+		{"unprotected legacy tx", 32, testutils.RandomLegacyTx, false},
+		{"legacy tx", 32, testutils.RandomLegacyTx, true},
+		{"access list tx", 32, testutils.RandomAccessListTx, true},
+		{"dynamic fee tx", 32, testutils.RandomDynamicFeeTx, true},
 		{"bls fee tx", 32, testutils.RandomBLSTx, true},
 	}
 
@@ -420,6 +486,12 @@ func TestBLSBatchReadTxData(t *testing.T) {
 			rng := rand.New(rand.NewSource(int64(0x109550 + i)))
 			chainID := new(big.Int).SetUint64(rng.Uint64())
 			signer := types.NewBLSSigner(chainID)
+			if testCase.name != "bls fee tx" {
+				signer = types.NewLondonSigner(chainID)
+				if !testCase.protected {
+					signer = types.HomesteadSigner{}
+				}
+			}
 
 			var rawTxs [][]byte
 			var txs []*types.Transaction
