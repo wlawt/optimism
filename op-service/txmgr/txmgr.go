@@ -696,16 +696,30 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		}
 		newTx = types.NewTx(message)
 	} else {
-		newTx = types.NewTx(&types.DynamicFeeTx{
-			ChainID:   tx.ChainId(),
-			Nonce:     tx.Nonce(),
-			To:        tx.To(),
-			GasTipCap: bumpedTip,
-			GasFeeCap: bumpedFee,
-			Value:     tx.Value(),
-			Data:      tx.Data(),
-			Gas:       gas,
-		})
+		if tx.Type() == types.BLSTxType {
+			newTx = types.NewTx(&types.BLSTx{
+				ChainID:   tx.ChainId(),
+				Nonce:     tx.Nonce(),
+				To:        tx.To(),
+				GasTipCap: bumpedTip,
+				GasFeeCap: bumpedFee,
+				Value:     tx.Value(),
+				Data:      tx.Data(),
+				Gas:       gas,
+				PublicKey: tx.PublicKey(),
+			})
+		} else {
+			newTx = types.NewTx(&types.DynamicFeeTx{
+				ChainID:   tx.ChainId(),
+				Nonce:     tx.Nonce(),
+				To:        tx.To(),
+				GasTipCap: bumpedTip,
+				GasFeeCap: bumpedFee,
+				Value:     tx.Value(),
+				Data:      tx.Data(),
+				Gas:       gas,
+			})
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, m.cfg.NetworkTimeout)
