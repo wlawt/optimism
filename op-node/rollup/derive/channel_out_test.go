@@ -35,13 +35,13 @@ func (s *nonCompressor) FullErr() error {
 }
 
 var blsChannelType = []struct {
-	ChannelOut func(t *testing.T) ChannelOut
+	ChannelOut func(t *testing.T, rcfg *rollup.Config) ChannelOut
 	Name       string
 }{
 	{
 		Name: "BLS",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
@@ -73,60 +73,29 @@ var channelTypes = []struct {
 
 // channelTypesWithBLS allows tests to run against different channel types
 var channelTypesWithBLS = []struct {
-	ChannelOut func(t *testing.T) ChannelOut
+	ChannelOut func(t *testing.T, rcfg *rollup.Config) ChannelOut
 	Name       string
 }{
 	{
 		Name: "Singular",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewSingularChannelOut(&nonCompressor{})
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewSingularChannelOut(&nonCompressor{}, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
 	},
 	{
 		Name: "Span",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewSpanChannelOut(0, big.NewInt(0), 128_000, Zlib)
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewSpanChannelOut(0, big.NewInt(0), 128_000, Zlib, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
 	},
 	{
 		Name: "BLS",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
-			require.NoError(t, err)
-			return cout
-		},
-	},
-}
-
-// channelTypesWithBLS allows tests to run against different channel types
-var channelTypesWithBLS = []struct {
-	ChannelOut func(t *testing.T) ChannelOut
-	Name       string
-}{
-	{
-		Name: "Singular",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewSingularChannelOut(&nonCompressor{})
-			require.NoError(t, err)
-			return cout
-		},
-	},
-	{
-		Name: "Span",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewSpanChannelOut(0, big.NewInt(0), 128_000, Zlib)
-			require.NoError(t, err)
-			return cout
-		},
-	},
-	{
-		Name: "BLS",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
@@ -203,7 +172,7 @@ func TestOutputFrameNoEmptyLastFrame(t *testing.T) {
 func TestOutputFrameNoEmptyLastFrameBLS(t *testing.T) {
 	for _, tcase := range blsChannelType {
 		t.Run(tcase.Name, func(t *testing.T) {
-			cout := tcase.ChannelOut(t)
+			cout := tcase.ChannelOut(t, &rollupCfg)
 
 			rng := rand.New(rand.NewSource(0x543331))
 			chainID := big.NewInt(0)
@@ -345,7 +314,7 @@ func BLSChannelAndBatches(t *testing.T, target uint64, len int, algo Compression
 	rng := rand.New(rand.NewSource(0x543331))
 	chainID := big.NewInt(rng.Int63n(1000))
 	txCount := 1
-	cout, err := NewBLSChannelOut(0, chainID, target, algo)
+	cout, err := NewBLSChannelOut(0, chainID, target, algo, rollup.NewChainSpec(&rollupCfg))
 	require.NoError(t, err)
 	batches := make([]*SingularBatch, len)
 	// adding the first batch should not cause an error
