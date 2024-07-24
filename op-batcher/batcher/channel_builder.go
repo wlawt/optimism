@@ -94,7 +94,7 @@ func NewChannelBuilder(cfg ChannelConfig, rollupCfg rollup.Config, latestL1Origi
 	chainSpec := rollup.NewChainSpec(&rollupCfg)
 	var co derive.ChannelOut
 	if cfg.BatchType == derive.SpanBatchType {
-		co, err = derive.NewSpanChannelOut(rollupCfg.Genesis.L2Time, rollupCfg.L2ChainID, cfg.CompressorConfig.TargetOutputSize, cfg.CompressorConfig.CompressionAlgo)
+		co, err = derive.NewSpanChannelOut(rollupCfg.Genesis.L2Time, rollupCfg.L2ChainID, cfg.CompressorConfig.TargetOutputSize, cfg.CompressorConfig.CompressionAlgo, chainSpec)
 	} else if cfg.BatchType == derive.BLSBatchType {
 		co, err = derive.NewBLSChannelOut(rollupCfg.Genesis.L2Time, rollupCfg.L2ChainID, cfg.CompressorConfig.TargetOutputSize, cfg.CompressorConfig.CompressionAlgo)
 	} else {
