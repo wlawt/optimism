@@ -75,8 +75,9 @@ func NewL2EngineAPI(log log.Logger, backend EngineBackend, downloader *downloade
 }
 
 var (
-	STATUS_INVALID = &eth.ForkchoiceUpdatedResult{PayloadStatus: eth.PayloadStatusV1{Status: eth.ExecutionInvalid}, PayloadID: nil}
-	STATUS_SYNCING = &eth.ForkchoiceUpdatedResult{PayloadStatus: eth.PayloadStatusV1{Status: eth.ExecutionSyncing}, PayloadID: nil}
+	STATUS_INVALID        = &eth.ForkchoiceUpdatedResult{PayloadStatus: eth.PayloadStatusV1{Status: eth.ExecutionInvalid}, PayloadID: nil}
+	STATUS_SYNCING        = &eth.ForkchoiceUpdatedResult{PayloadStatus: eth.PayloadStatusV1{Status: eth.ExecutionSyncing}, PayloadID: nil}
+	INVALID_AGGREGATE_SIG = &eth.ForkchoiceUpdatedResult{PayloadStatus: eth.PayloadStatusV1{Status: eth.ExecutionInvalid}, PayloadID: nil}
 )
 
 // computePayloadId computes a pseudo-random payloadid, based on the parameters.
@@ -350,6 +351,10 @@ func (ea *L2EngineAPI) forkchoiceUpdated(_ context.Context, state *eth.Forkchoic
 		}
 		return STATUS_SYNCING, nil
 	}
+	// Verify Aggregate Signature if there are any BLS transactions in a block
+	if err := engine.VerifyAggregate(block); err != nil {
+		return INVALID_AGGREGATE_SIG, nil
+	}
 	// Block is known locally, just sanity check that the beacon client does not
 	// attempt to push us back to before the merge.
 	// Note: Differs from op-geth implementation as pre-merge blocks are never supported here
@@ -462,6 +467,7 @@ func (ea *L2EngineAPI) newPayload(_ context.Context, payload *eth.ExecutionPaylo
 		Withdrawals:   toGethWithdrawals(payload),
 		ExcessBlobGas: (*uint64)(payload.ExcessBlobGas),
 		BlobGasUsed:   (*uint64)(payload.BlobGasUsed),
+		AggregatedSig: payload.AggregatedSig,
 	}, hashes, root)
 	if err != nil {
 		log.Debug("Invalid NewPayload params", "params", payload, "error", err)

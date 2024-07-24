@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/wait"
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls/blst"
 
 	"github.com/ethereum-optimism/optimism/op-e2e/bindings"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/transactions"
@@ -15,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/stretchr/testify/require"
 )
@@ -118,7 +120,7 @@ func SendL2Tx(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, privKe
 func SendL2TxBLS(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, privKey *ecdsa.PrivateKey, applyTxOpts BLSTxOptsFn) *types.Receipt {
 	opts := blsTxOpts()
 	applyTxOpts(opts)
-	tx := types.MustSignNewTx(privKey, types.NewBLSSigner(cfg.L2ChainIDBig()), &types.BLSTx{
+	tx, err := types.SignNewTx(privKey, types.NewBLSSigner(cfg.L2ChainIDBig()), &types.BLSTx{
 		ChainID:   cfg.L2ChainIDBig(),
 		Nonce:     opts.Nonce, // Already have deposit
 		To:        opts.ToAddr,
@@ -129,9 +131,22 @@ func SendL2TxBLS(t *testing.T, cfg SystemConfig, l2Client *ethclient.Client, pri
 		Data:      opts.Data,
 		PublicKey: opts.PublicKey,
 	})
+	require.NoError(t, err, "Signing L2 BLS tx")
+
+	b := crypto.FromECDSA(privKey)
+	blsPrv, err := blst.SecretKeyFromBytes(b)
+	require.NoError(t, err, "Converting secret key bytes for L2 BLS tx")
+
+	sig := blsPrv.Sign(tx.Hash().Bytes()).Marshal()
+	require.NotEqual(t, 0, len(sig))
+
+	tx.SetSignature(sig)
+	require.NotNil(t, tx.Signature())
+	require.NotEqual(t, 0, len(tx.Signature()))
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	err := l2Client.SendTransaction(ctx, tx)
+	err = l2Client.SendTransaction(ctx, tx)
 	require.NoError(t, err, "Sending L2 BLS tx")
 
 	require.NotNil(t, tx.Hash())

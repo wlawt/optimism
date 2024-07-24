@@ -770,8 +770,8 @@ github.com/valyala/fasttemplate v1.0.1/go.mod h1:UQGH1tvbgY+Nz5t2n7tXsz52dQxojPU
 github.com/valyala/fasttemplate v1.2.1/go.mod h1:KHLXt3tVN2HBp8eijSv/kGJopbvo7S+qRAEEKiv+SiQ=
 github.com/viant/assertly v0.4.8/go.mod h1:aGifi++jvCrUaklKEKT0BU95igDNaqkvz+49uaYMPRU=
 github.com/viant/toolbox v0.24.0/go.mod h1:OxMCG57V0PXuIP2HNQrtJf2CjqdmbrOx5EkMILuUhzM=
-github.com/wlawt/op-geth v0.0.0-20240719195124-b6a6ee5035cc h1:SgDtf8ptgwqpsfe5SmP7klCQgmqWoYHM03whznBDZe0=
-github.com/wlawt/op-geth v0.0.0-20240719195124-b6a6ee5035cc/go.mod h1:x1hMKVLLAMTEKLn2JR8IpwFWPr5nLS+o7/EyeeyFeQY=
+github.com/wlawt/op-geth v0.0.0-20240719230213-192b9a2a26f7 h1:WvVKMLI5XEk9PDK24wwCtriBLsaGcZHpikiY5ql8yU8=
+github.com/wlawt/op-geth v0.0.0-20240719230213-192b9a2a26f7/go.mod h1:x1hMKVLLAMTEKLn2JR8IpwFWPr5nLS+o7/EyeeyFeQY=
 github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 h1:bAn7/zixMGCfxrRTfdpNzjtPYqr8smhKouy9mxVdGPU=
 github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673/go.mod h1:N3UwUGtsrSj3ccvlPHLoLsHnpR27oXr4ZE984MbSER8=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
