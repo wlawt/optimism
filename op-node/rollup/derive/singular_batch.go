@@ -29,6 +29,7 @@ type SingularBatch struct {
 
 func (b *SingularBatch) AsSingularBatch() (*SingularBatch, bool) { return b, true }
 func (b *SingularBatch) AsSpanBatch() (*SpanBatch, bool)         { return nil, false }
+func (b *SingularBatch) AsBLSBatch() (*BLSBatch, bool)           { return nil, false }
 
 // GetBatchType returns its batch type (batch_version)
 func (b *SingularBatch) GetBatchType() int {

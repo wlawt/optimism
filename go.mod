@@ -42,6 +42,7 @@ require (
 	github.com/pkg/profile v1.7.0
 	github.com/prometheus/client_golang v1.19.1
 	github.com/protolambda/ctxlock v0.1.0
+	github.com/prysmaticlabs/prysm/v5 v5.0.4
 	github.com/stretchr/testify v1.9.0
 	github.com/urfave/cli/v2 v2.27.3
 	golang.org/x/crypto v0.25.0
@@ -194,7 +195,6 @@ require (
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/prysmaticlabs/fastssz v0.0.0-20240620202422-a981b8ef89d3 // indirect
 	github.com/prysmaticlabs/gohashtree v0.0.4-beta // indirect
-	github.com/prysmaticlabs/prysm/v5 v5.0.4 // indirect
 	github.com/quic-go/qpack v0.4.0 // indirect
 	github.com/quic-go/quic-go v0.44.0 // indirect
 	github.com/quic-go/webtransport-go v0.8.0 // indirect
@@ -236,7 +236,7 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/ethereum/go-ethereum => github.com/wlawt/op-geth v0.0.0-20240625211637-29b504d8b9a2
+replace github.com/ethereum/go-ethereum => github.com/wlawt/op-geth v0.0.0-20240625201406-271b3faf7017
 
 //replace github.com/ethereum/go-ethereum v1.13.9 => ../op-geth
 

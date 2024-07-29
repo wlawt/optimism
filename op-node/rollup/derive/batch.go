@@ -28,6 +28,7 @@ const (
 	SingularBatchType = 0
 	// SpanBatchType is the Batch version used after Delta hard fork, representing a span of L2 blocks.
 	SpanBatchType = 1
+	BLSBatchType  = 2
 )
 
 // Batch contains information to build one or multiple L2 blocks.
@@ -39,6 +40,7 @@ type Batch interface {
 	LogContext(log.Logger) log.Logger
 	AsSingularBatch() (*SingularBatch, bool)
 	AsSpanBatch() (*SpanBatch, bool)
+	AsBLSBatch() (*BLSBatch, bool)
 }
 
 type batchWithMetadata struct {
@@ -132,6 +134,8 @@ func (b *BatchData) decodeTyped(data []byte) error {
 		inner = new(SingularBatch)
 	case SpanBatchType:
 		inner = new(RawSpanBatch)
+	case BLSBatchType:
+		inner = new(RawBLSBatch)
 	default:
 		return fmt.Errorf("unrecognized batch type: %d", data[0])
 	}

@@ -13,53 +13,45 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
 
-// Batch format
-//
-// SpanBatchType := 1
-// spanBatch := SpanBatchType ++ prefix ++ payload
-// prefix := rel_timestamp ++ l1_origin_num ++ parent_check ++ l1_origin_check
-// payload := block_count ++ origin_bits ++ block_tx_counts ++ txs
-// txs := contract_creation_bits ++ y_parity_bits ++ tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits
+var ErrTooBigBLSBatchSize = errors.New("bls batch size limit reached")
 
-var ErrTooBigSpanBatchSize = errors.New("span batch size limit reached")
+var ErrEmptyBLSBatch = errors.New("bls-batch must not be empty")
 
-var ErrEmptySpanBatch = errors.New("span-batch must not be empty")
-
-type spanBatchPrefix struct {
+type blsBatchPrefix struct {
 	relTimestamp  uint64   // Relative timestamp of the first block
 	l1OriginNum   uint64   // L1 origin number
 	parentCheck   [20]byte // First 20 bytes of the first block's parent hash
 	l1OriginCheck [20]byte // First 20 bytes of the last block's L1 origin hash
 }
 
-type spanBatchPayload struct {
-	blockCount    uint64        // Number of L2 block in the span
-	originBits    *big.Int      // Standard span-batch bitlist of blockCount bits. Each bit indicates if the L1 origin is changed at the L2 block.
-	blockTxCounts []uint64      // List of transaction counts for each L2 block
-	txs           *spanBatchTxs // Transactions encoded in SpanBatch specs
+type blsBatchPayload struct {
+	blockCount    uint64
+	originBits    *big.Int
+	blockTxCounts []uint64     // List of transaction counts for each L2 block
+	txs           *blsBatchTxs // Transactions encoded in BLSBatch specs
+	aggregatedSig []byte
 }
 
-// RawSpanBatch is another representation of SpanBatch, that encodes data according to SpanBatch specs.
-type RawSpanBatch struct {
-	spanBatchPrefix
-	spanBatchPayload
+// RawBLSBatch is another representation of BLSBatch, that encodes data according to BLSBatch specs.
+type RawBLSBatch struct {
+	blsBatchPrefix
+	blsBatchPayload
 }
 
 // GetBatchType returns its batch type (batch_version)
-func (b *RawSpanBatch) GetBatchType() int {
-	return SpanBatchType
+func (b *RawBLSBatch) GetBatchType() int {
+	return BLSBatchType
 }
 
 // decodeOriginBits parses data into bp.originBits
-func (bp *spanBatchPayload) decodeOriginBits(r *bytes.Reader) error {
+func (bp *blsBatchPayload) decodeOriginBits(r *bytes.Reader) error {
 	if bp.blockCount > MaxSpanBatchElementCount {
-		return ErrTooBigSpanBatchSize
+		return ErrTooBigBLSBatchSize
 	}
 	bits, err := decodeSpanBatchBits(r, bp.blockCount)
 	if err != nil {
@@ -70,7 +62,7 @@ func (bp *spanBatchPayload) decodeOriginBits(r *bytes.Reader) error {
 }
 
 // decodeRelTimestamp parses data into bp.relTimestamp
-func (bp *spanBatchPrefix) decodeRelTimestamp(r *bytes.Reader) error {
+func (bp *blsBatchPrefix) decodeRelTimestamp(r *bytes.Reader) error {
 	relTimestamp, err := binary.ReadUvarint(r)
 	if err != nil {
 		return fmt.Errorf("failed to read rel timestamp: %w", err)
@@ -80,7 +72,7 @@ func (bp *spanBatchPrefix) decodeRelTimestamp(r *bytes.Reader) error {
 }
 
 // decodeL1OriginNum parses data into bp.l1OriginNum
-func (bp *spanBatchPrefix) decodeL1OriginNum(r *bytes.Reader) error {
+func (bp *blsBatchPrefix) decodeL1OriginNum(r *bytes.Reader) error {
 	L1OriginNum, err := binary.ReadUvarint(r)
 	if err != nil {
 		return fmt.Errorf("failed to read l1 origin num: %w", err)
@@ -90,7 +82,7 @@ func (bp *spanBatchPrefix) decodeL1OriginNum(r *bytes.Reader) error {
 }
 
 // decodeParentCheck parses data into bp.parentCheck
-func (bp *spanBatchPrefix) decodeParentCheck(r *bytes.Reader) error {
+func (bp *blsBatchPrefix) decodeParentCheck(r *bytes.Reader) error {
 	_, err := io.ReadFull(r, bp.parentCheck[:])
 	if err != nil {
 		return fmt.Errorf("failed to read parent check: %w", err)
@@ -99,7 +91,7 @@ func (bp *spanBatchPrefix) decodeParentCheck(r *bytes.Reader) error {
 }
 
 // decodeL1OriginCheck parses data into bp.decodeL1OriginCheck
-func (bp *spanBatchPrefix) decodeL1OriginCheck(r *bytes.Reader) error {
+func (bp *blsBatchPrefix) decodeL1OriginCheck(r *bytes.Reader) error {
 	_, err := io.ReadFull(r, bp.l1OriginCheck[:])
 	if err != nil {
 		return fmt.Errorf("failed to read l1 origin check: %w", err)
@@ -107,8 +99,8 @@ func (bp *spanBatchPrefix) decodeL1OriginCheck(r *bytes.Reader) error {
 	return nil
 }
 
-// decodePrefix parses data into bp.spanBatchPrefix
-func (bp *spanBatchPrefix) decodePrefix(r *bytes.Reader) error {
+// decodePrefix parses data into bp.blsBatchPrefix
+func (bp *blsBatchPrefix) decodePrefix(r *bytes.Reader) error {
 	if err := bp.decodeRelTimestamp(r); err != nil {
 		return err
 	}
@@ -125,17 +117,17 @@ func (bp *spanBatchPrefix) decodePrefix(r *bytes.Reader) error {
 }
 
 // decodeBlockCount parses data into bp.blockCount
-func (bp *spanBatchPayload) decodeBlockCount(r *bytes.Reader) error {
+func (bp *blsBatchPayload) decodeBlockCount(r *bytes.Reader) error {
 	blockCount, err := binary.ReadUvarint(r)
 	if err != nil {
 		return fmt.Errorf("failed to read block count: %w", err)
 	}
-	// number of L2 block in span batch cannot be greater than MaxSpanBatchElementCount
+
 	if blockCount > MaxSpanBatchElementCount {
-		return ErrTooBigSpanBatchSize
+		return ErrTooBigBLSBatchSize
 	}
 	if blockCount == 0 {
-		return ErrEmptySpanBatch
+		return ErrEmptyBLSBatch
 	}
 	bp.blockCount = blockCount
 	return nil
@@ -143,17 +135,16 @@ func (bp *spanBatchPayload) decodeBlockCount(r *bytes.Reader) error {
 
 // decodeBlockTxCounts parses data into bp.blockTxCounts
 // and sets bp.txs.totalBlockTxCount as sum(bp.blockTxCounts)
-func (bp *spanBatchPayload) decodeBlockTxCounts(r *bytes.Reader) error {
+func (bp *blsBatchPayload) decodeBlockTxCounts(r *bytes.Reader) error {
 	var blockTxCounts []uint64
 	for i := 0; i < int(bp.blockCount); i++ {
 		blockTxCount, err := binary.ReadUvarint(r)
 		if err != nil {
 			return fmt.Errorf("failed to read block tx count: %w", err)
 		}
-		// number of txs in single L2 block cannot be greater than MaxSpanBatchElementCount
-		// every tx will take at least single byte
+
 		if blockTxCount > MaxSpanBatchElementCount {
-			return ErrTooBigSpanBatchSize
+			return ErrTooBigBLSBatchSize
 		}
 		blockTxCounts = append(blockTxCounts, blockTxCount)
 	}
@@ -162,9 +153,9 @@ func (bp *spanBatchPayload) decodeBlockTxCounts(r *bytes.Reader) error {
 }
 
 // decodeTxs parses data into bp.txs
-func (bp *spanBatchPayload) decodeTxs(r *bytes.Reader) error {
+func (bp *blsBatchPayload) decodeTxs(r *bytes.Reader) error {
 	if bp.txs == nil {
-		bp.txs = &spanBatchTxs{}
+		bp.txs = &blsBatchTxs{}
 	}
 	if bp.blockTxCounts == nil {
 		return errors.New("failed to read txs: blockTxCounts not set")
@@ -173,13 +164,13 @@ func (bp *spanBatchPayload) decodeTxs(r *bytes.Reader) error {
 	for i := 0; i < len(bp.blockTxCounts); i++ {
 		total, overflow := math.SafeAdd(totalBlockTxCount, bp.blockTxCounts[i])
 		if overflow {
-			return ErrTooBigSpanBatchSize
+			return ErrTooBigBLSBatchSize
 		}
 		totalBlockTxCount = total
 	}
-	// total number of txs in span batch cannot be greater than MaxSpanBatchElementCount
+
 	if totalBlockTxCount > MaxSpanBatchElementCount {
-		return ErrTooBigSpanBatchSize
+		return ErrTooBigBLSBatchSize
 	}
 	bp.txs.totalBlockTxCount = totalBlockTxCount
 	if err := bp.txs.decode(r); err != nil {
@@ -188,8 +179,20 @@ func (bp *spanBatchPayload) decodeTxs(r *bytes.Reader) error {
 	return nil
 }
 
-// decodePayload parses data into bp.spanBatchPayload
-func (bp *spanBatchPayload) decodePayload(r *bytes.Reader) error {
+func (bp *blsBatchPayload) decodeAggregatedSig(r *bytes.Reader) error {
+	aggSig, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("failed to read aggregated signature: %w", err)
+	}
+	bp.aggregatedSig = aggSig
+	if len(aggSig) == 0 {
+		bp.aggregatedSig = nil
+	}
+	return nil
+}
+
+// decodePayload parses data into bp.blsBatchPayload
+func (bp *blsBatchPayload) decodePayload(r *bytes.Reader) error {
 	if err := bp.decodeBlockCount(r); err != nil {
 		return err
 	}
@@ -202,22 +205,25 @@ func (bp *spanBatchPayload) decodePayload(r *bytes.Reader) error {
 	if err := bp.decodeTxs(r); err != nil {
 		return err
 	}
+	if err := bp.decodeAggregatedSig(r); err != nil {
+		return err
+	}
 	return nil
 }
 
-// decode reads the byte encoding of SpanBatch from Reader stream
-func (b *RawSpanBatch) decode(r *bytes.Reader) error {
+// decode reads the byte encoding of BLSBatch from Reader stream
+func (b *RawBLSBatch) decode(r *bytes.Reader) error {
 	if err := b.decodePrefix(r); err != nil {
-		return fmt.Errorf("failed to decode span batch prefix: %w", err)
+		return fmt.Errorf("failed to decode bls batch prefix: %w", err)
 	}
 	if err := b.decodePayload(r); err != nil {
-		return fmt.Errorf("failed to decode span batch payload: %w", err)
+		return fmt.Errorf("failed to decode bls batch payload: %w", err)
 	}
 	return nil
 }
 
 // encodeRelTimestamp encodes bp.relTimestamp
-func (bp *spanBatchPrefix) encodeRelTimestamp(w io.Writer) error {
+func (bp *blsBatchPrefix) encodeRelTimestamp(w io.Writer) error {
 	var buf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(buf[:], bp.relTimestamp)
 	if _, err := w.Write(buf[:n]); err != nil {
@@ -227,7 +233,7 @@ func (bp *spanBatchPrefix) encodeRelTimestamp(w io.Writer) error {
 }
 
 // encodeL1OriginNum encodes bp.l1OriginNum
-func (bp *spanBatchPrefix) encodeL1OriginNum(w io.Writer) error {
+func (bp *blsBatchPrefix) encodeL1OriginNum(w io.Writer) error {
 	var buf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(buf[:], bp.l1OriginNum)
 	if _, err := w.Write(buf[:n]); err != nil {
@@ -237,7 +243,7 @@ func (bp *spanBatchPrefix) encodeL1OriginNum(w io.Writer) error {
 }
 
 // encodeParentCheck encodes bp.parentCheck
-func (bp *spanBatchPrefix) encodeParentCheck(w io.Writer) error {
+func (bp *blsBatchPrefix) encodeParentCheck(w io.Writer) error {
 	if _, err := w.Write(bp.parentCheck[:]); err != nil {
 		return fmt.Errorf("cannot write parent check: %w", err)
 	}
@@ -245,15 +251,15 @@ func (bp *spanBatchPrefix) encodeParentCheck(w io.Writer) error {
 }
 
 // encodeL1OriginCheck encodes bp.l1OriginCheck
-func (bp *spanBatchPrefix) encodeL1OriginCheck(w io.Writer) error {
+func (bp *blsBatchPrefix) encodeL1OriginCheck(w io.Writer) error {
 	if _, err := w.Write(bp.l1OriginCheck[:]); err != nil {
 		return fmt.Errorf("cannot write l1 origin check: %w", err)
 	}
 	return nil
 }
 
-// encodePrefix encodes spanBatchPrefix
-func (bp *spanBatchPrefix) encodePrefix(w io.Writer) error {
+// encodePrefix encodes blsBatchPrefix
+func (bp *blsBatchPrefix) encodePrefix(w io.Writer) error {
 	if err := bp.encodeRelTimestamp(w); err != nil {
 		return err
 	}
@@ -270,7 +276,7 @@ func (bp *spanBatchPrefix) encodePrefix(w io.Writer) error {
 }
 
 // encodeOriginBits encodes bp.originBits
-func (bp *spanBatchPayload) encodeOriginBits(w io.Writer) error {
+func (bp *blsBatchPayload) encodeOriginBits(w io.Writer) error {
 	if err := encodeSpanBatchBits(w, bp.blockCount, bp.originBits); err != nil {
 		return fmt.Errorf("failed to encode origin bits: %w", err)
 	}
@@ -278,7 +284,7 @@ func (bp *spanBatchPayload) encodeOriginBits(w io.Writer) error {
 }
 
 // encodeBlockCount encodes bp.blockCount
-func (bp *spanBatchPayload) encodeBlockCount(w io.Writer) error {
+func (bp *blsBatchPayload) encodeBlockCount(w io.Writer) error {
 	var buf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(buf[:], bp.blockCount)
 	if _, err := w.Write(buf[:n]); err != nil {
@@ -288,7 +294,7 @@ func (bp *spanBatchPayload) encodeBlockCount(w io.Writer) error {
 }
 
 // encodeBlockTxCounts encodes bp.blockTxCounts
-func (bp *spanBatchPayload) encodeBlockTxCounts(w io.Writer) error {
+func (bp *blsBatchPayload) encodeBlockTxCounts(w io.Writer) error {
 	var buf [binary.MaxVarintLen64]byte
 	for _, blockTxCount := range bp.blockTxCounts {
 		n := binary.PutUvarint(buf[:], blockTxCount)
@@ -300,7 +306,7 @@ func (bp *spanBatchPayload) encodeBlockTxCounts(w io.Writer) error {
 }
 
 // encodeTxs encodes bp.txs
-func (bp *spanBatchPayload) encodeTxs(w io.Writer) error {
+func (bp *blsBatchPayload) encodeTxs(w io.Writer) error {
 	if bp.txs == nil {
 		return errors.New("cannot write txs: txs not set")
 	}
@@ -310,8 +316,16 @@ func (bp *spanBatchPayload) encodeTxs(w io.Writer) error {
 	return nil
 }
 
-// encodePayload encodes spanBatchPayload
-func (bp *spanBatchPayload) encodePayload(w io.Writer) error {
+func (bp *blsBatchPayload) encodeAggregatedSig(w io.Writer) error {
+	aggSig := bp.aggregatedSig
+	if _, err := w.Write(aggSig); err != nil {
+		return fmt.Errorf("cannot write aggregated sig: %w", err)
+	}
+	return nil
+}
+
+// encodePayload encodes blsBatchPayload
+func (bp *blsBatchPayload) encodePayload(w io.Writer) error {
 	if err := bp.encodeBlockCount(w); err != nil {
 		return err
 	}
@@ -324,11 +338,14 @@ func (bp *spanBatchPayload) encodePayload(w io.Writer) error {
 	if err := bp.encodeTxs(w); err != nil {
 		return err
 	}
+	if err := bp.encodeAggregatedSig(w); err != nil {
+		return err
+	}
 	return nil
 }
 
-// encode writes the byte encoding of SpanBatch to Writer stream
-func (b *RawSpanBatch) encode(w io.Writer) error {
+// encode writes the byte encoding of BLSBatch to Writer stream
+func (b *RawBLSBatch) encode(w io.Writer) error {
 	if err := b.encodePrefix(w); err != nil {
 		return err
 	}
@@ -338,11 +355,11 @@ func (b *RawSpanBatch) encode(w io.Writer) error {
 	return nil
 }
 
-// derive converts RawSpanBatch into SpanBatch, which has a list of SpanBatchElement.
+// derive converts RawBLSBatch into BLSBatch, which has a list of BLSBatchElement.
 // We need chain config constants to derive values for making payload attributes.
-func (b *RawSpanBatch) derive(blockTime, genesisTimestamp uint64, chainID *big.Int) (*SpanBatch, error) {
+func (b *RawBLSBatch) derive(blockTime, genesisTimestamp uint64, chainID *big.Int) (*BLSBatch, error) {
 	if b.blockCount == 0 {
-		return nil, ErrEmptySpanBatch
+		return nil, ErrEmptyBLSBatch
 	}
 	blockOriginNums := make([]uint64, b.blockCount)
 	l1OriginBlockNumber := b.l1OriginNum
@@ -353,107 +370,106 @@ func (b *RawSpanBatch) derive(blockTime, genesisTimestamp uint64, chainID *big.I
 		}
 	}
 
-	if err := b.txs.recoverV(chainID); err != nil {
-		return nil, err
-	}
 	fullTxs, err := b.txs.fullTxs(chainID)
 	if err != nil {
 		return nil, err
 	}
 
-	spanBatch := SpanBatch{
+	blsBatch := BLSBatch{
 		ParentCheck:   b.parentCheck,
 		L1OriginCheck: b.l1OriginCheck,
 	}
 	txIdx := 0
 	for i := 0; i < int(b.blockCount); i++ {
-		batch := SpanBatchElement{}
+		batch := BLSBatchElement{}
 		batch.Timestamp = genesisTimestamp + b.relTimestamp + blockTime*uint64(i)
 		batch.EpochNum = rollup.Epoch(blockOriginNums[i])
 		for j := 0; j < int(b.blockTxCounts[i]); j++ {
 			batch.Transactions = append(batch.Transactions, fullTxs[txIdx])
 			txIdx++
 		}
-		spanBatch.Batches = append(spanBatch.Batches, &batch)
+		batch.AggregatedSig = b.aggregatedSig
+		blsBatch.Batches = append(blsBatch.Batches, &batch)
 	}
-	return &spanBatch, nil
+	return &blsBatch, nil
 }
 
-// ToSpanBatch converts RawSpanBatch to SpanBatch,
-// which implements a wrapper of derive method of RawSpanBatch
-func (b *RawSpanBatch) ToSpanBatch(blockTime, genesisTimestamp uint64, chainID *big.Int) (*SpanBatch, error) {
-	spanBatch, err := b.derive(blockTime, genesisTimestamp, chainID)
+// ToBLSBatch converts RawBLSBatch to BLSBatch,
+// which implements a wrapper of derive method of RawBLSBatch
+func (b *RawBLSBatch) ToBLSBatch(blockTime, genesisTimestamp uint64, chainID *big.Int) (*BLSBatch, error) {
+	blsBatch, err := b.derive(blockTime, genesisTimestamp, chainID)
 	if err != nil {
 		return nil, err
 	}
-	return spanBatch, nil
+	return blsBatch, nil
 }
 
-// SpanBatchElement is a derived form of input to build a L2 block.
+// BLSBatchElement is a derived form of input to build a L2 block.
 // similar to SingularBatch, but does not have ParentHash and EpochHash
-// because Span batch spec does not contain parent hash and epoch hash of every block in the span.
-type SpanBatchElement struct {
-	EpochNum     rollup.Epoch // aka l1 num
-	Timestamp    uint64
-	Transactions []hexutil.Bytes
+// because BLS batch spec does not contain parent hash and epoch hash of every block in the .
+type BLSBatchElement struct {
+	EpochNum      rollup.Epoch // aka l1 num
+	Timestamp     uint64
+	Transactions  []hexutil.Bytes
+	AggregatedSig []byte
 }
 
-// singularBatchToElement converts a SingularBatch to a SpanBatchElement
-func singularBatchToElement(singularBatch *SingularBatch) *SpanBatchElement {
-	return &SpanBatchElement{
+// singularBatchToBLSElement converts a SingularBatch to a BLSBatchElement
+func singularBatchToBLSElement(singularBatch *SingularBatch) *BLSBatchElement {
+	return &BLSBatchElement{
 		EpochNum:     singularBatch.EpochNum,
 		Timestamp:    singularBatch.Timestamp,
 		Transactions: singularBatch.Transactions,
 	}
 }
 
-// SpanBatch is an implementation of Batch interface,
-// containing the input to build a span of L2 blocks in derived form (SpanBatchElement)
-type SpanBatch struct {
+// BLSBatch is an implementation of Batch interface,
+// containing the input to build a span of L2 blocks in derived form (BLSBatchElement)
+type BLSBatch struct {
 	ParentCheck      [20]byte // First 20 bytes of the first block's parent hash
 	L1OriginCheck    [20]byte // First 20 bytes of the last block's L1 origin hash
 	GenesisTimestamp uint64
 	ChainID          *big.Int
-	Batches          []*SpanBatchElement // List of block input in derived form
+	Batches          []*BLSBatchElement // List of block input in derived form
 
 	// caching
 	originBits    *big.Int
 	blockTxCounts []uint64
-	sbtxs         *spanBatchTxs
+	blstxs        *blsBatchTxs
 }
 
-func (b *SpanBatch) AsSingularBatch() (*SingularBatch, bool) { return nil, false }
-func (b *SpanBatch) AsSpanBatch() (*SpanBatch, bool)         { return b, true }
-func (b *SpanBatch) AsBLSBatch() (*BLSBatch, bool)           { return nil, false }
+func (b *BLSBatch) AsSingularBatch() (*SingularBatch, bool) { return nil, false }
+func (b *BLSBatch) AsSpanBatch() (*SpanBatch, bool)         { return nil, false }
+func (b *BLSBatch) AsBLSBatch() (*BLSBatch, bool)           { return b, true }
 
-// spanBatchMarshaling is a helper type used for JSON marshaling.
-type spanBatchMarshaling struct {
-	ParentCheck   []hexutil.Bytes     `json:"parent_check"`
-	L1OriginCheck []hexutil.Bytes     `json:"l1_origin_check"`
-	Batches       []*SpanBatchElement `json:"span_batch_elements"`
+// blsBatchMarshaling is a helper type used for JSON marshaling.
+type blsBatchMarshaling struct {
+	ParentCheck   []hexutil.Bytes    `json:"parent_check"`
+	L1OriginCheck []hexutil.Bytes    `json:"l1_origin_check"`
+	Batches       []*BLSBatchElement `json:"bls_batch_elements"`
 }
 
-func (b *SpanBatch) MarshalJSON() ([]byte, error) {
-	spanBatch := spanBatchMarshaling{
+func (b *BLSBatch) MarshalJSON() ([]byte, error) {
+	blsBatch := blsBatchMarshaling{
 		ParentCheck:   []hexutil.Bytes{b.ParentCheck[:]},
 		L1OriginCheck: []hexutil.Bytes{b.L1OriginCheck[:]},
 		Batches:       b.Batches,
 	}
-	return json.Marshal(spanBatch)
+	return json.Marshal(blsBatch)
 }
 
 // GetBatchType returns its batch type (batch_version)
-func (b *SpanBatch) GetBatchType() int {
-	return SpanBatchType
+func (b *BLSBatch) GetBatchType() int {
+	return BLSBatchType
 }
 
 // GetTimestamp returns timestamp of the first block in the span
-func (b *SpanBatch) GetTimestamp() uint64 {
+func (b *BLSBatch) GetTimestamp() uint64 {
 	return b.Batches[0].Timestamp
 }
 
 // TxCount returns the tx count for the batch
-func (b *SpanBatch) TxCount() (count uint64) {
+func (b *BLSBatch) TxCount() (count uint64) {
 	for _, txCount := range b.blockTxCounts {
 		count += txCount
 	}
@@ -461,12 +477,12 @@ func (b *SpanBatch) TxCount() (count uint64) {
 }
 
 // LogContext creates a new log context that contains information of the batch
-func (b *SpanBatch) LogContext(log log.Logger) log.Logger {
+func (b *BLSBatch) LogContext(log log.Logger) log.Logger {
 	if len(b.Batches) == 0 {
 		return log.New("block_count", 0)
 	}
 	return log.New(
-		"batch_type", "SpanBatch",
+		"batch_type", "BLSBatch",
 		"batch_timestamp", b.Batches[0].Timestamp,
 		"parent_check", hexutil.Encode(b.ParentCheck[:]),
 		"origin_check", hexutil.Encode(b.L1OriginCheck[:]),
@@ -478,52 +494,57 @@ func (b *SpanBatch) LogContext(log log.Logger) log.Logger {
 }
 
 // GetStartEpochNum returns epoch number(L1 origin block number) of the first block in the span
-func (b *SpanBatch) GetStartEpochNum() rollup.Epoch {
+func (b *BLSBatch) GetStartEpochNum() rollup.Epoch {
 	return b.Batches[0].EpochNum
 }
 
 // CheckOriginHash checks if the l1OriginCheck matches the first 20 bytes of given hash, probably L1 block hash from the current canonical L1 chain.
-func (b *SpanBatch) CheckOriginHash(hash common.Hash) bool {
+func (b *BLSBatch) CheckOriginHash(hash common.Hash) bool {
 	return bytes.Equal(b.L1OriginCheck[:], hash.Bytes()[:20])
 }
 
 // CheckParentHash checks if the parentCheck matches the first 20 bytes of given hash, probably the current L2 safe head.
-func (b *SpanBatch) CheckParentHash(hash common.Hash) bool {
+func (b *BLSBatch) CheckParentHash(hash common.Hash) bool {
 	return bytes.Equal(b.ParentCheck[:], hash.Bytes()[:20])
 }
 
 // GetBlockEpochNum returns the epoch number(L1 origin block number) of the block at the given index in the span.
-func (b *SpanBatch) GetBlockEpochNum(i int) uint64 {
+func (b *BLSBatch) GetBlockEpochNum(i int) uint64 {
 	return uint64(b.Batches[i].EpochNum)
 }
 
 // GetBlockTimestamp returns the timestamp of the block at the given index in the span.
-func (b *SpanBatch) GetBlockTimestamp(i int) uint64 {
+func (b *BLSBatch) GetBlockTimestamp(i int) uint64 {
 	return b.Batches[i].Timestamp
 }
 
 // GetBlockTransactions returns the encoded transactions of the block at the given index in the span.
-func (b *SpanBatch) GetBlockTransactions(i int) []hexutil.Bytes {
+func (b *BLSBatch) GetBlockTransactions(i int) []hexutil.Bytes {
 	return b.Batches[i].Transactions
 }
 
 // GetBlockCount returns the number of blocks in the span
-func (b *SpanBatch) GetBlockCount() int {
+func (b *BLSBatch) GetBlockCount() int {
 	return len(b.Batches)
 }
 
-func (b *SpanBatch) peek(n int) *SpanBatchElement { return b.Batches[len(b.Batches)-1-n] }
+// GetAggregatedSignature returns the BLS Aggregated Signature of the block at a given index in the span.
+func (b *BLSBatch) GetAggregatedSignature(i int) []byte {
+	return b.Batches[i].AggregatedSig
+}
 
-// AppendSingularBatch appends a SingularBatch into the span batch
+func (b *BLSBatch) peek(n int) *BLSBatchElement { return b.Batches[len(b.Batches)-1-n] }
+
+// AppendSingularBatch appends a SingularBatch into the bls batch
 // updates l1OriginCheck or parentCheck if needed.
-func (b *SpanBatch) AppendSingularBatch(singularBatch *SingularBatch, seqNum uint64) error {
+func (b *BLSBatch) AppendSingularBatch(singularBatch *SingularBatch, seqNum uint64) error {
 	// if this new element is not ordered with respect to the last element, panic
 	if len(b.Batches) > 0 && b.peek(0).Timestamp > singularBatch.Timestamp {
-		panic("span batch is not ordered")
+		panic("bls batch is not ordered")
 	}
 
 	// always append the new batch and set the L1 origin check
-	b.Batches = append(b.Batches, singularBatchToElement(singularBatch))
+	b.Batches = append(b.Batches, singularBatchToBLSElement(singularBatch))
 
 	// always update the L1 origin check
 	copy(b.L1OriginCheck[:], singularBatch.EpochHash.Bytes()[:20])
@@ -547,44 +568,44 @@ func (b *SpanBatch) AppendSingularBatch(singularBatch *SingularBatch, seqNum uin
 	// update the blockTxCounts cache with the latest batch's tx count
 	b.blockTxCounts = append(b.blockTxCounts, uint64(len(b.peek(0).Transactions)))
 
-	// add the new txs to the sbtxs
+	// add the new txs to the blstxs
 	newTxs := make([][]byte, 0, len(b.peek(0).Transactions))
 	for i := 0; i < len(b.peek(0).Transactions); i++ {
 		newTxs = append(newTxs, b.peek(0).Transactions[i])
 	}
-	// add the new txs to the sbtxs
+	// add the new txs to the blstxs
 	// this is the only place where we can get an error
-	return b.sbtxs.AddTxs(newTxs, b.ChainID)
+	return b.blstxs.AddTxs(newTxs, b.ChainID)
 }
 
-// ToRawSpanBatch merges SingularBatch List and initialize single RawSpanBatch
-func (b *SpanBatch) ToRawSpanBatch() (*RawSpanBatch, error) {
+// ToRawBLSBatch merges SingularBatch List and initialize single RawBLSBatch
+func (b *BLSBatch) ToRawBLSBatch() (*RawBLSBatch, error) {
 	if len(b.Batches) == 0 {
 		return nil, errors.New("cannot merge empty singularBatch list")
 	}
-	span_start := b.Batches[0]
-	span_end := b.Batches[len(b.Batches)-1]
+	bls_start := b.Batches[0]
+	bls_end := b.Batches[len(b.Batches)-1]
 
-	return &RawSpanBatch{
-		spanBatchPrefix: spanBatchPrefix{
-			relTimestamp:  span_start.Timestamp - b.GenesisTimestamp,
-			l1OriginNum:   uint64(span_end.EpochNum),
+	return &RawBLSBatch{
+		blsBatchPrefix: blsBatchPrefix{
+			relTimestamp:  bls_start.Timestamp - b.GenesisTimestamp,
+			l1OriginNum:   uint64(bls_end.EpochNum),
 			parentCheck:   b.ParentCheck,
 			l1OriginCheck: b.L1OriginCheck,
 		},
-		spanBatchPayload: spanBatchPayload{
+		blsBatchPayload: blsBatchPayload{
 			blockCount:    uint64(len(b.Batches)),
 			originBits:    b.originBits,
 			blockTxCounts: b.blockTxCounts,
-			txs:           b.sbtxs,
+			txs:           b.blstxs,
 		},
 	}, nil
 }
 
-// GetSingularBatches converts SpanBatchElements after L2 safe head to SingularBatches.
-// Since SpanBatchElement does not contain EpochHash, set EpochHash from the given L1 blocks.
+// GetSingularBatches converts BLSBatchElements after L2 safe head to SingularBatches.
+// Since BLSBatchElement does not contain EpochHash, set EpochHash from the given L1 blocks.
 // The result SingularBatches do not contain ParentHash yet. It must be set by BatchQueue.
-func (b *SpanBatch) GetSingularBatches(l1Origins []eth.L1BlockRef, l2SafeHead eth.L2BlockRef) ([]*SingularBatch, error) {
+func (b *BLSBatch) GetSingularBatches(l1Origins []eth.L1BlockRef, l2SafeHead eth.L2BlockRef) ([]*SingularBatch, error) {
 	var singularBatches []*SingularBatch
 	originIdx := 0
 	for _, batch := range b.Batches {
@@ -613,68 +634,24 @@ func (b *SpanBatch) GetSingularBatches(l1Origins []eth.L1BlockRef, l2SafeHead et
 	return singularBatches, nil
 }
 
-// NewSpanBatch converts given singularBatches into SpanBatchElements, and creates a new SpanBatch.
-func NewSpanBatch(genesisTimestamp uint64, chainID *big.Int) *SpanBatch {
-	// newSpanBatchTxs can't fail with empty txs
-	sbtxs, _ := newSpanBatchTxs([][]byte{}, chainID)
-	return &SpanBatch{
+// NewBLSBatch converts given singularBatches into BLSBatchElements, and creates a new BLSBatch.
+func NewBLSBatch(genesisTimestamp uint64, chainID *big.Int) *BLSBatch {
+	// newBLSBatchTxs can't fail with empty txs
+	blstxs, _ := newBLSBatchTxs([][]byte{}, chainID)
+	return &BLSBatch{
 		GenesisTimestamp: genesisTimestamp,
 		ChainID:          chainID,
 		originBits:       big.NewInt(0),
-		sbtxs:            sbtxs,
+		blstxs:           blstxs,
 	}
 }
 
-// DeriveSpanBatch derives SpanBatch from BatchData.
-func DeriveSpanBatch(batchData *BatchData, blockTime, genesisTimestamp uint64, chainID *big.Int) (*SpanBatch, error) {
-	rawSpanBatch, ok := batchData.inner.(*RawSpanBatch)
+// DeriveBLSBatch derives BLSBatch from BatchData.
+func DeriveBLSBatch(batchData *BatchData, blockTime, genesisTimestamp uint64, chainID *big.Int) (*BLSBatch, error) {
+	RawBLSBatch, ok := batchData.inner.(*RawBLSBatch)
 	if !ok {
-		return nil, NewCriticalError(errors.New("failed type assertion to SpanBatch"))
+		return nil, NewCriticalError(errors.New("failed type assertion to BLSBatch"))
 	}
-	// If the batch type is Span batch, derive block inputs from RawSpanBatch.
-	return rawSpanBatch.ToSpanBatch(blockTime, genesisTimestamp, chainID)
-}
-
-// ReadTxData reads raw RLP tx data from reader and returns txData and txType
-func ReadTxData(r *bytes.Reader) ([]byte, int, error) {
-	var txData []byte
-	offset, err := r.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to seek tx reader: %w", err)
-	}
-	b, err := r.ReadByte()
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to read tx initial byte: %w", err)
-	}
-	txType := byte(0)
-	if int(b) <= 0x7F {
-		// EIP-2718: non legacy tx so write tx type
-		txType = byte(b)
-		txData = append(txData, txType)
-	} else {
-		// legacy tx: seek back single byte to read prefix again
-		_, err = r.Seek(offset, io.SeekStart)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to seek tx reader: %w", err)
-		}
-	}
-	// avoid out of memory before allocation
-	s := rlp.NewStream(r, MaxSpanBatchElementCount)
-	var txPayload []byte
-	kind, _, err := s.Kind()
-	switch {
-	case err != nil:
-		if errors.Is(err, rlp.ErrValueTooLarge) {
-			return nil, 0, ErrTooBigSpanBatchSize
-		}
-		return nil, 0, fmt.Errorf("failed to read tx RLP prefix: %w", err)
-	case kind == rlp.List:
-		if txPayload, err = s.Raw(); err != nil {
-			return nil, 0, fmt.Errorf("failed to read tx RLP payload: %w", err)
-		}
-	default:
-		return nil, 0, errors.New("tx RLP prefix type must be list")
-	}
-	txData = append(txData, txPayload...)
-	return txData, int(txType), nil
+	// If the batch type is BLS batch, derive block inputs from RawBLSBatch.
+	return RawBLSBatch.ToBLSBatch(blockTime, genesisTimestamp, chainID)
 }

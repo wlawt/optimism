@@ -197,6 +197,17 @@ func (bq *BatchQueue) NextBatch(ctx context.Context, parent eth.L2BlockRef) (*Si
 		bq.nextSpan = singularBatches
 		// span-batches are non-empty, so the below pop is safe.
 		nextBatch = bq.popNextBatch(parent)
+	case BLSBatchType:
+		blsBatch, ok := batch.AsBLSBatch()
+		if !ok {
+			return nil, false, NewCriticalError(errors.New("failed type assertion to BLSBatch"))
+		}
+		singularBatches, err := blsBatch.GetSingularBatches(bq.l1Blocks, parent)
+		if err != nil {
+			return nil, false, NewCriticalError(err)
+		}
+		bq.nextSpan = singularBatches
+		nextBatch = bq.popNextBatch(parent)
 	default:
 		return nil, false, NewCriticalError(fmt.Errorf("unrecognized batch type: %d", typ))
 	}

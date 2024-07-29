@@ -11,12 +11,102 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/testutils"
+
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls/blst"
 )
+
+func RandomRawBLSBatch(rng *rand.Rand, chainId *big.Int) *RawBLSBatch {
+	blockCount := uint64(4 + rng.Int()&0xFF) // at least 4
+	originBits := new(big.Int)
+	for i := 0; i < int(blockCount); i++ {
+		bit := uint(0)
+		if testutils.RandomBool(rng) {
+			bit = uint(1)
+		}
+		originBits.SetBit(originBits, i, bit)
+	}
+	var blockTxCounts []uint64
+	totalblockTxCounts := uint64(0)
+	for i := 0; i < int(blockCount); i++ {
+		blockTxCount := 1 + uint64(rng.Intn(16))
+		blockTxCounts = append(blockTxCounts, blockTxCount)
+		totalblockTxCounts += blockTxCount
+	}
+	var txs [][]byte
+	var sigs []bls.Signature
+	for i := 0; i < int(totalblockTxCounts); i++ {
+		var tx *types.Transaction
+		blsSigner := types.NewBLSSigner(chainId)
+
+		blsKey, _ := crypto.GenerateBLSKey()
+		ecdsaPrivKey, err := crypto.BLSToECDSA(blsKey)
+		if err != nil {
+			panic(err)
+		}
+		baseFee := new(big.Int).SetUint64(rng.Uint64())
+		tip := big.NewInt(rng.Int63n(10 * params.GWei))
+		txData := &types.BLSTx{
+			ChainID:    blsSigner.ChainID(),
+			Nonce:      rng.Uint64(),
+			GasTipCap:  tip,
+			GasFeeCap:  new(big.Int).Add(baseFee, tip),
+			Gas:        params.TxGas + uint64(rng.Int63n(2_000_000)),
+			To:         testutils.RandomTo(rng),
+			Value:      testutils.RandomETH(rng, 10),
+			Data:       testutils.RandomData(rng, rng.Intn(testutils.RandomDataSize)),
+			AccessList: nil,
+			PublicKey:  blsKey.PublicKey().Marshal(),
+		}
+		tx, err = types.SignNewTx(ecdsaPrivKey, blsSigner, txData)
+		if err != nil {
+			panic(err)
+		}
+		sig := blsKey.Sign(tx.Hash().Bytes()).Marshal()
+		tx.SetSignature(sig)
+
+		s, err := blst.SignatureFromBytes(tx.Signature())
+		if err != nil {
+			panic(err)
+		}
+		sigs = append(sigs, s)
+		tx.SetSignature(nil)
+		rawTx, err := tx.MarshalBinary()
+		if err != nil {
+			panic("MarshalBinary:" + err.Error())
+		}
+		txs = append(txs, rawTx)
+	}
+	aggSig := blst.AggregateSignatures(sigs).Marshal()
+
+	blsBatchTxs, err := newBLSBatchTxs(txs, chainId)
+	if err != nil {
+		panic(err.Error())
+	}
+	rawBLSBatch := RawBLSBatch{
+		blsBatchPrefix: blsBatchPrefix{
+			relTimestamp:  uint64(rng.Uint32()),
+			l1OriginNum:   rng.Uint64(),
+			parentCheck:   [20]byte(testutils.RandomData(rng, 20)),
+			l1OriginCheck: [20]byte(testutils.RandomData(rng, 20)),
+		},
+		blsBatchPayload: blsBatchPayload{
+			blockCount:    blockCount,
+			originBits:    originBits,
+			blockTxCounts: blockTxCounts,
+			txs:           blsBatchTxs,
+			aggregatedSig: aggSig,
+		},
+	}
+	return &rawBLSBatch
+}
 
 func RandomRawSpanBatch(rng *rand.Rand, chainId *big.Int) *RawSpanBatch {
 	blockCount := uint64(4 + rng.Int()&0xFF) // at least 4
@@ -104,6 +194,34 @@ func RandomValidConsecutiveSingularBatches(rng *rand.Rand, chainID *big.Int) []*
 	return singularBatches
 }
 
+func RandomValidConsecutiveSingularBLSBatches(rng *rand.Rand, chainID *big.Int) []*SingularBatch {
+	blockCount := 2 + rng.Intn(128)
+	l2BlockTime := uint64(2)
+
+	var singularBatches []*SingularBatch
+	for i := 0; i < blockCount; i++ {
+		singularBatch := RandomSingularBLSBatch(rng, 1+rng.Intn(8), chainID)
+		singularBatches = append(singularBatches, singularBatch)
+	}
+	l1BlockNum := rng.Uint64()
+	// make sure oldest timestamp is large enough
+	singularBatches[0].Timestamp += 256
+	for i := 0; i < blockCount; i++ {
+		originChangedBit := rng.Intn(2)
+		if originChangedBit == 1 {
+			l1BlockNum++
+			singularBatches[i].EpochHash = testutils.RandomHash(rng)
+		} else if i > 0 {
+			singularBatches[i].EpochHash = singularBatches[i-1].EpochHash
+		}
+		singularBatches[i].EpochNum = rollup.Epoch(l1BlockNum)
+		if i > 0 {
+			singularBatches[i].Timestamp = singularBatches[i-1].Timestamp + l2BlockTime
+		}
+	}
+	return singularBatches
+}
+
 func mockL1Origin(rng *rand.Rand, rawSpanBatch *RawSpanBatch, singularBatches []*SingularBatch) []eth.L1BlockRef {
 	safeHeadOrigin := testutils.RandomBlockRef(rng)
 	safeHeadOrigin.Hash = singularBatches[0].EpochHash
@@ -151,6 +269,7 @@ func TestBatchRoundTrip(t *testing.T) {
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
+		NewBatchData(RandomRawBLSBatch(rng, chainID)),
 	}
 
 	for i, batch := range batches {
@@ -159,8 +278,12 @@ func TestBatchRoundTrip(t *testing.T) {
 		var dec BatchData
 		err = dec.UnmarshalBinary(enc)
 		require.NoError(t, err)
-		if dec.GetBatchType() == SpanBatchType {
+		switch dec.GetBatchType() {
+		case SpanBatchType:
 			_, err := DeriveSpanBatch(&dec, blockTime, genesisTimestamp, chainID)
+			require.NoError(t, err)
+		case BLSBatchType:
+			_, err := DeriveBLSBatch(&dec, blockTime, genesisTimestamp, chainID)
 			require.NoError(t, err)
 		}
 		require.Equal(t, batch, &dec, "Batch not equal test case %v", i)
@@ -195,6 +318,7 @@ func TestBatchRoundTripRLP(t *testing.T) {
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
 		NewBatchData(RandomRawSpanBatch(rng, chainID)),
+		NewBatchData(RandomRawBLSBatch(rng, chainID)),
 	}
 
 	for i, batch := range batches {
@@ -207,8 +331,12 @@ func TestBatchRoundTripRLP(t *testing.T) {
 		s := rlp.NewStream(r, 0)
 		err = dec.DecodeRLP(s)
 		require.NoError(t, err)
-		if dec.GetBatchType() == SpanBatchType {
-			_, err = DeriveSpanBatch(&dec, blockTime, genesisTimestamp, chainID)
+		switch dec.GetBatchType() {
+		case SpanBatchType:
+			_, err := DeriveSpanBatch(&dec, blockTime, genesisTimestamp, chainID)
+			require.NoError(t, err)
+		case BLSBatchType:
+			_, err := DeriveBLSBatch(&dec, blockTime, genesisTimestamp, chainID)
 			require.NoError(t, err)
 		}
 		require.Equal(t, batch, &dec, "Batch not equal test case %v", i)

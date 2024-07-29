@@ -34,6 +34,20 @@ func (s *nonCompressor) FullErr() error {
 	return nil
 }
 
+var blsChannelType = []struct {
+	ChannelOut func(t *testing.T) ChannelOut
+	Name       string
+}{
+	{
+		Name: "BLS",
+		ChannelOut: func(t *testing.T) ChannelOut {
+			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
+			require.NoError(t, err)
+			return cout
+		},
+	},
+}
+
 // channelTypes allows tests to run against different channel types
 var channelTypes = []struct {
 	ChannelOut func(t *testing.T, rcfg *rollup.Config) ChannelOut
@@ -57,8 +71,39 @@ var channelTypes = []struct {
 	},
 }
 
+// channelTypesWithBLS allows tests to run against different channel types
+var channelTypesWithBLS = []struct {
+	ChannelOut func(t *testing.T) ChannelOut
+	Name       string
+}{
+	{
+		Name: "Singular",
+		ChannelOut: func(t *testing.T) ChannelOut {
+			cout, err := NewSingularChannelOut(&nonCompressor{})
+			require.NoError(t, err)
+			return cout
+		},
+	},
+	{
+		Name: "Span",
+		ChannelOut: func(t *testing.T) ChannelOut {
+			cout, err := NewSpanChannelOut(0, big.NewInt(0), 128_000, Zlib)
+			require.NoError(t, err)
+			return cout
+		},
+	},
+	{
+		Name: "BLS",
+		ChannelOut: func(t *testing.T) ChannelOut {
+			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
+			require.NoError(t, err)
+			return cout
+		},
+	},
+}
+
 func TestChannelOutAddBlock(t *testing.T) {
-	for _, tcase := range channelTypes {
+	for _, tcase := range channelTypesWithBLS {
 		t.Run(tcase.Name, func(t *testing.T) {
 			cout := tcase.ChannelOut(t, &rollupCfg)
 			header := &types.Header{Number: big.NewInt(1), Difficulty: big.NewInt(100)}
@@ -79,7 +124,7 @@ func TestChannelOutAddBlock(t *testing.T) {
 // max size that is below the fixed frame size overhead of FrameV0OverHeadSize (23),
 // will return an error.
 func TestOutputFrameSmallMaxSize(t *testing.T) {
-	for _, tcase := range channelTypes {
+	for _, tcase := range channelTypesWithBLS {
 		t.Run(tcase.Name, func(t *testing.T) {
 			cout := tcase.ChannelOut(t, &rollupCfg)
 			// Call OutputFrame with the range of small max size values that err
@@ -114,6 +159,35 @@ func TestOutputFrameNoEmptyLastFrame(t *testing.T) {
 				written = uint64(span.compressor.Len())
 			} else if singular, ok := cout.(*SingularChannelOut); ok {
 				written = uint64(singular.compress.Len())
+			}
+
+			var buf bytes.Buffer
+			// Output a frame which needs exactly `written` bytes. This frame is expected to be the last frame.
+			_, err = cout.OutputFrame(&buf, written+FrameV0OverHeadSize)
+			require.ErrorIs(t, err, io.EOF)
+		})
+	}
+}
+
+func TestOutputFrameNoEmptyLastFrameBLS(t *testing.T) {
+	for _, tcase := range blsChannelType {
+		t.Run(tcase.Name, func(t *testing.T) {
+			cout := tcase.ChannelOut(t)
+
+			rng := rand.New(rand.NewSource(0x543331))
+			chainID := big.NewInt(0)
+			txCount := 1
+			singularBatch := RandomSingularBLSBatch(rng, txCount, chainID)
+
+			err := cout.AddSingularBatch(singularBatch, 0)
+			var written uint64
+			require.NoError(t, err)
+
+			require.NoError(t, cout.Close())
+
+			// depending on the channel type, determine the size of the written data
+			if bls, ok := cout.(*BLSChannelOut); ok {
+				written = uint64(bls.compressor.Len())
 			}
 
 			var buf bytes.Buffer
@@ -235,6 +309,23 @@ func SpanChannelAndBatches(t *testing.T, target uint64, len int, algo Compressio
 	return cout, batches
 }
 
+func BLSChannelAndBatches(t *testing.T, target uint64, len int, algo CompressionAlgo) (*BLSChannelOut, []*SingularBatch) {
+	// target is larger than one batch, but smaller than two batches
+	rng := rand.New(rand.NewSource(0x543331))
+	chainID := big.NewInt(rng.Int63n(1000))
+	txCount := 1
+	cout, err := NewBLSChannelOut(0, chainID, target, algo)
+	require.NoError(t, err)
+	batches := make([]*SingularBatch, len)
+	// adding the first batch should not cause an error
+	for i := 0; i < len; i++ {
+		singularBatch := RandomSingularBLSBatch(rng, txCount, chainID)
+		batches[i] = singularBatch
+	}
+
+	return cout, batches
+}
+
 func TestSpanChannelOut(t *testing.T) {
 	tests := []struct {
 		name string
@@ -243,6 +334,8 @@ func TestSpanChannelOut(t *testing.T) {
 		{"SpanChannelOutCompressionOnlyOneBatch", SpanChannelOutCompressionOnlyOneBatch},
 		{"SpanChannelOutCompressionUndo", SpanChannelOutCompressionUndo},
 		{"SpanChannelOutClose", SpanChannelOutClose},
+		{"BLSChannelOutCompressionOnlyOneBatch", BLSChannelOutCompressionOnlyOneBatch},
+		// TODO: fix BLSChannelOutCompressionOnlyOneBatch and BLSChannelOutClose
 	}
 	for _, test := range tests {
 		test := test
@@ -258,6 +351,22 @@ func TestSpanChannelOut(t *testing.T) {
 // and it is larger than the target size. The single batch should be compressed, and the channel should now be full
 func SpanChannelOutCompressionOnlyOneBatch(t *testing.T, algo CompressionAlgo) {
 	cout, singularBatches := SpanChannelAndBatches(t, 300, 2, algo)
+
+	err := cout.AddSingularBatch(singularBatches[0], 0)
+	// confirm compression was not skipped
+	require.Greater(t, cout.compressor.Len(), 0)
+	require.NoError(t, err)
+
+	// confirm the channel is full
+	require.ErrorIs(t, cout.FullErr(), ErrCompressorFull)
+
+	// confirm adding another batch would cause the same full error
+	err = cout.AddSingularBatch(singularBatches[1], 0)
+	require.ErrorIs(t, err, ErrCompressorFull)
+}
+
+func BLSChannelOutCompressionOnlyOneBatch(t *testing.T, algo CompressionAlgo) {
+	cout, singularBatches := BLSChannelAndBatches(t, 300, 2, algo)
 
 	err := cout.AddSingularBatch(singularBatches[0], 0)
 	// confirm compression was not skipped

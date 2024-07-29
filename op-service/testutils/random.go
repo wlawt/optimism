@@ -218,6 +218,34 @@ func RandomDynamicFeeTxWithBaseFee(rng *rand.Rand, baseFee *big.Int, signer type
 	return tx
 }
 
+func RandomBLSTx(rng *rand.Rand, signer types.Signer) *types.Transaction {
+	blsKey, _ := crypto.GenerateBLSKey()
+	ecdsaPrivKey, err := crypto.BLSToECDSA(blsKey)
+	if err != nil {
+		panic(err)
+	}
+
+	baseFee := new(big.Int).SetUint64(rng.Uint64())
+	tip := big.NewInt(rng.Int63n(10 * params.GWei))
+	txData := &types.BLSTx{
+		ChainID:    signer.ChainID(),
+		Nonce:      rng.Uint64(),
+		GasTipCap:  tip,
+		GasFeeCap:  new(big.Int).Add(baseFee, tip),
+		Gas:        params.TxGas + uint64(rng.Int63n(2_000_000)),
+		To:         RandomTo(rng),
+		Value:      RandomETH(rng, 10),
+		Data:       RandomData(rng, rng.Intn(RandomDataSize)),
+		AccessList: nil,
+		PublicKey:  blsKey.PublicKey().Marshal(),
+	}
+	tx, err := types.SignNewTx(ecdsaPrivKey, signer, txData)
+	if err != nil {
+		panic(err)
+	}
+	return tx
+}
+
 var RandomDataSize = 1000
 
 func RandomDynamicFeeTx(rng *rand.Rand, signer types.Signer) *types.Transaction {
