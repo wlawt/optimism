@@ -219,6 +219,10 @@ func (l *BatchSubmitter) loadBlockIntoState(ctx context.Context, blockNumber uin
 		return nil, fmt.Errorf("adding L2 block to state: %w", err)
 	}
 
+	for _, tx := range block.Transactions() {
+		l.Log.Info("TX TYPE INCLUDED:", "type", tx.Type())
+	}
+
 	l.Log.Info("Added L2 block to local state", "block", eth.ToBlockID(block), "tx_count", len(block.Transactions()), "time", block.Time())
 	return block, nil
 }

@@ -370,6 +370,9 @@ func (b *RawBLSBatch) derive(blockTime, genesisTimestamp uint64, chainID *big.In
 		}
 	}
 
+	if err := b.txs.recoverV(chainID); err != nil {
+		return nil, err
+	}
 	fullTxs, err := b.txs.fullTxs(chainID)
 	if err != nil {
 		return nil, err
@@ -648,10 +651,10 @@ func NewBLSBatch(genesisTimestamp uint64, chainID *big.Int) *BLSBatch {
 
 // DeriveBLSBatch derives BLSBatch from BatchData.
 func DeriveBLSBatch(batchData *BatchData, blockTime, genesisTimestamp uint64, chainID *big.Int) (*BLSBatch, error) {
-	RawBLSBatch, ok := batchData.inner.(*RawBLSBatch)
+	rawBLSBatch, ok := batchData.inner.(*RawBLSBatch)
 	if !ok {
 		return nil, NewCriticalError(errors.New("failed type assertion to BLSBatch"))
 	}
 	// If the batch type is BLS batch, derive block inputs from RawBLSBatch.
-	return RawBLSBatch.ToBLSBatch(blockTime, genesisTimestamp, chainID)
+	return rawBLSBatch.ToBLSBatch(blockTime, genesisTimestamp, chainID)
 }

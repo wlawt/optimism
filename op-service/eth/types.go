@@ -197,6 +197,7 @@ type ExecutionPayload struct {
 	BlobGasUsed *Uint64Quantity `json:"blobGasUsed,omitempty"`
 	// Nil if not present (Bedrock, Canyon, Delta)
 	ExcessBlobGas *Uint64Quantity `json:"excessBlobGas,omitempty"`
+	AggregatedSig []byte          `json:"aggregatedSig,omitempty"`
 }
 
 func (payload *ExecutionPayload) ID() BlockID {
@@ -247,6 +248,7 @@ func (envelope *ExecutionPayloadEnvelope) CheckBlockHash() (actual common.Hash, 
 		Nonce:            types.BlockNonce{}, // zeroed, proof-of-work legacy
 		BaseFee:          (*uint256.Int)(&payload.BaseFeePerGas).ToBig(),
 		ParentBeaconRoot: envelope.ParentBeaconBlockRoot,
+		AggregatedSig:    payload.AggregatedSig,
 	}
 
 	if payload.CanyonBlock() {
@@ -289,6 +291,7 @@ func BlockAsPayload(bl *types.Block, canyonForkTime *uint64) (*ExecutionPayload,
 		Transactions:  opaqueTxs,
 		ExcessBlobGas: (*Uint64Quantity)(bl.ExcessBlobGas()),
 		BlobGasUsed:   (*Uint64Quantity)(bl.BlobGasUsed()),
+		AggregatedSig: bl.AggregatedSig(),
 	}
 
 	if canyonForkTime != nil && uint64(payload.Timestamp) >= *canyonForkTime {

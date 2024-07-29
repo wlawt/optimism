@@ -80,7 +80,7 @@ func init() {
 	flag.StringVar(&l1DeploymentsPath, "l1-deployments", defaultL1DeploymentsPath, "")
 	flag.StringVar(&deployConfigPath, "deploy-config", defaultDeployConfigPath, "")
 	flag.StringVar(&externalL2, "externalL2", "", "Enable tests with external L2")
-	flag.IntVar(&EthNodeVerbosity, "ethLogVerbosity", LegacyLevelInfo, "The (legacy geth) level of verbosity to use for the eth node logs")
+	flag.IntVar(&EthNodeVerbosity, "ethLogVerbosity", LegacyLevelDebug, "The (legacy geth) level of verbosity to use for the eth node logs")
 	testing.Init() // Register test flags before parsing
 	flag.Parse()
 

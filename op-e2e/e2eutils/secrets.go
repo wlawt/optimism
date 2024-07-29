@@ -10,6 +10,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
 )
 
 const defaultHDPathPrefix = "m/44'/60'/0'/0/"
@@ -99,6 +101,14 @@ func (m *MnemonicConfig) Secrets() (*Secrets, error) {
 	if err != nil {
 		return nil, err
 	}
+	john, err := crypto.GenerateBLSKey()
+	if err != nil {
+		return nil, err
+	}
+	johnECDSA, err := crypto.BLSToECDSA(john)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Secrets{
 		Deployer:     deployer,
@@ -111,6 +121,8 @@ func (m *MnemonicConfig) Secrets() (*Secrets, error) {
 		Bob:          bob,
 		Mallory:      mallory,
 		Wallet:       wallet,
+		John:         johnECDSA,
+		JohnBLS:      john,
 	}, nil
 }
 
@@ -129,6 +141,10 @@ type Secrets struct {
 	Alice   *ecdsa.PrivateKey
 	Bob     *ecdsa.PrivateKey
 	Mallory *ecdsa.PrivateKey
+
+	// BLS key
+	John    *ecdsa.PrivateKey
+	JohnBLS bls.SecretKey
 
 	// Share the wallet to be able to generate more accounts
 	Wallet *hdwallet.Wallet
@@ -149,6 +165,11 @@ func EncodePrivKeyToString(priv *ecdsa.PrivateKey) string {
 // Addresses computes the ethereum address of each account,
 // which can then be kept around for fast precomputed address access.
 func (s *Secrets) Addresses() *Addresses {
+	john, err := crypto.BLSToAddress(s.JohnBLS.PublicKey().Marshal())
+	if err != nil {
+		panic("could not create John's sender address")
+	}
+
 	return &Addresses{
 		Deployer:     crypto.PubkeyToAddress(s.Deployer.PublicKey),
 		CliqueSigner: crypto.PubkeyToAddress(s.CliqueSigner.PublicKey),
@@ -159,6 +180,7 @@ func (s *Secrets) Addresses() *Addresses {
 		Alice:        crypto.PubkeyToAddress(s.Alice.PublicKey),
 		Bob:          crypto.PubkeyToAddress(s.Bob.PublicKey),
 		Mallory:      crypto.PubkeyToAddress(s.Mallory.PublicKey),
+		John:         john,
 	}
 }
 
@@ -177,6 +199,8 @@ type Addresses struct {
 	Alice   common.Address
 	Bob     common.Address
 	Mallory common.Address
+
+	John common.Address
 }
 
 func (a *Addresses) All() []common.Address {
@@ -190,6 +214,7 @@ func (a *Addresses) All() []common.Address {
 		a.Alice,
 		a.Bob,
 		a.Mallory,
+		a.John,
 	}
 }
 

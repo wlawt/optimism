@@ -28,6 +28,9 @@ func decodeSpanBatchBits(r *bytes.Reader, bitLength uint64) (*big.Int, error) {
 	if l := uint64(out.BitLen()); l > bitLength {
 		return nil, fmt.Errorf("bitfield has %d bits, but expected no more than %d", l, bitLength)
 	}
+	if out.BitLen() == 0 {
+		return new(big.Int), nil
+	}
 	return out, nil
 }
 

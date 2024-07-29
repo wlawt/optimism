@@ -386,6 +386,8 @@ func convertVToYParity(v uint64, txType int) (uint, error) {
 		yParityBit = uint(v)
 	case types.DynamicFeeTxType:
 		yParityBit = uint(v)
+	case types.BLSTxType:
+		yParityBit = uint(0)
 	default:
 		return 0, fmt.Errorf("invalid tx type: %d", txType)
 	}

@@ -119,7 +119,7 @@ require (
 	github.com/hashicorp/go-msgpack/v2 v2.1.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d // indirect
 	github.com/hashicorp/golang-lru/arc/v2 v2.0.7 // indirect
-	github.com/herumi/bls-eth-go-binary v0.0.0-20210917013441-d37c07cfda4e // indirect
+	github.com/herumi/bls-eth-go-binary v1.35.0 // indirect
 	github.com/holiman/billy v0.0.0-20240216141850-2abb0c79d3c4 // indirect
 	github.com/holiman/bloomfilter/v2 v2.0.3 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
@@ -236,7 +236,7 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/ethereum/go-ethereum => github.com/wlawt/op-geth v0.0.0-20240625201406-271b3faf7017
+replace github.com/ethereum/go-ethereum => github.com/wlawt/op-geth v0.0.0-20240729223356-7c726ca516cb
 
 //replace github.com/ethereum/go-ethereum v1.13.9 => ../op-geth
 

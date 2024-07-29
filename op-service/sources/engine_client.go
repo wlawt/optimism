@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -15,6 +16,8 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/client"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/sources/caching"
+
+	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
 )
 
 type EngineClientConfig struct {
@@ -168,6 +171,29 @@ func (s *EngineAPIClient) GetPayload(ctx context.Context, payloadInfo eth.Payloa
 		}
 		return nil, err
 	}
+
+	var (
+		signatures    []bls.Signature
+		aggregatedSig []byte
+	)
+	for i, otx := range result.ExecutionPayload.Transactions {
+		var tx types.Transaction
+		if err := tx.UnmarshalBinary(otx); err != nil {
+			return nil, fmt.Errorf("transaction %d is not valid: %v", i, err)
+		}
+		if tx.Type() == types.BLSTxType {
+			sig, err := bls.SignatureFromBytes(tx.Signature())
+			if err != nil {
+				return nil, fmt.Errorf("transaction %d could not get BLS signature: %v", i, err)
+			}
+			signatures = append(signatures, sig)
+		}
+	}
+	if len(signatures) != 0 {
+		aggregatedSig = bls.AggregateSignatures(signatures).Marshal()
+	}
+	result.ExecutionPayload.AggregatedSig = aggregatedSig
+
 	e.Trace("Received payload")
 	return &result, nil
 }

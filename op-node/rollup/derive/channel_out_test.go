@@ -35,13 +35,13 @@ func (s *nonCompressor) FullErr() error {
 }
 
 var blsChannelType = []struct {
-	ChannelOut func(t *testing.T) ChannelOut
+	ChannelOut func(t *testing.T, rcfg *rollup.Config) ChannelOut
 	Name       string
 }{
 	{
 		Name: "BLS",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
@@ -73,29 +73,29 @@ var channelTypes = []struct {
 
 // channelTypesWithBLS allows tests to run against different channel types
 var channelTypesWithBLS = []struct {
-	ChannelOut func(t *testing.T) ChannelOut
+	ChannelOut func(t *testing.T, rcfg *rollup.Config) ChannelOut
 	Name       string
 }{
 	{
 		Name: "Singular",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewSingularChannelOut(&nonCompressor{})
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewSingularChannelOut(&nonCompressor{}, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
 	},
 	{
 		Name: "Span",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewSpanChannelOut(0, big.NewInt(0), 128_000, Zlib)
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewSpanChannelOut(0, big.NewInt(0), 128_000, Zlib, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
 	},
 	{
 		Name: "BLS",
-		ChannelOut: func(t *testing.T) ChannelOut {
-			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib)
+		ChannelOut: func(t *testing.T, rcfg *rollup.Config) ChannelOut {
+			cout, err := NewBLSChannelOut(0, big.NewInt(0), 128_000, Zlib, rollup.NewChainSpec(rcfg))
 			require.NoError(t, err)
 			return cout
 		},
@@ -172,7 +172,7 @@ func TestOutputFrameNoEmptyLastFrame(t *testing.T) {
 func TestOutputFrameNoEmptyLastFrameBLS(t *testing.T) {
 	for _, tcase := range blsChannelType {
 		t.Run(tcase.Name, func(t *testing.T) {
-			cout := tcase.ChannelOut(t)
+			cout := tcase.ChannelOut(t, &rollupCfg)
 
 			rng := rand.New(rand.NewSource(0x543331))
 			chainID := big.NewInt(0)
@@ -314,7 +314,7 @@ func BLSChannelAndBatches(t *testing.T, target uint64, len int, algo Compression
 	rng := rand.New(rand.NewSource(0x543331))
 	chainID := big.NewInt(rng.Int63n(1000))
 	txCount := 1
-	cout, err := NewBLSChannelOut(0, chainID, target, algo)
+	cout, err := NewBLSChannelOut(0, chainID, target, algo, rollup.NewChainSpec(&rollupCfg))
 	require.NoError(t, err)
 	batches := make([]*SingularBatch, len)
 	// adding the first batch should not cause an error
@@ -326,7 +326,7 @@ func BLSChannelAndBatches(t *testing.T, target uint64, len int, algo Compression
 	return cout, batches
 }
 
-func TestSpanChannelOut(t *testing.T) {
+func TestSpanAndBLSChannelOut(t *testing.T) {
 	tests := []struct {
 		name string
 		f    func(t *testing.T, algo CompressionAlgo)
@@ -335,7 +335,7 @@ func TestSpanChannelOut(t *testing.T) {
 		{"SpanChannelOutCompressionUndo", SpanChannelOutCompressionUndo},
 		{"SpanChannelOutClose", SpanChannelOutClose},
 		{"BLSChannelOutCompressionOnlyOneBatch", BLSChannelOutCompressionOnlyOneBatch},
-		// TODO: fix BLSChannelOutCompressionOnlyOneBatch and BLSChannelOutClose
+		{"BLSChannelOutClose", BLSChannelOutClose},
 	}
 	for _, test := range tests {
 		test := test
@@ -421,6 +421,25 @@ func SpanChannelOutClose(t *testing.T, algo CompressionAlgo) {
 	} else {
 		require.Equal(t, 1, cout.compressor.Len()) // 1 because of brotli channel version
 	}
+
+	// confirm the RLP length is less than the target
+	rlpLen := cout.activeRLP().Len()
+	require.Less(t, uint64(rlpLen), target)
+
+	// close the channel
+	require.NoError(t, cout.Close())
+
+	// confirm that the only batch was compressed, and that the RLP did not change
+	require.Greater(t, cout.compressor.Len(), 0)
+	require.Equal(t, rlpLen, cout.activeRLP().Len())
+}
+
+func BLSChannelOutClose(t *testing.T, algo CompressionAlgo) {
+	target := uint64(1200)
+	cout, singularBatches := BLSChannelAndBatches(t, target, 1, algo)
+
+	err := cout.AddSingularBatch(singularBatches[0], 0)
+	require.NoError(t, err)
 
 	// confirm the RLP length is less than the target
 	rlpLen := cout.activeRLP().Len()
