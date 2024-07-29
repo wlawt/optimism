@@ -449,6 +449,9 @@ func (ea *L2EngineAPI) newPayload(_ context.Context, payload *eth.ExecutionPaylo
 	for i, tx := range payload.Transactions {
 		txs[i] = tx
 	}
+	if len(payload.AggregatedSig) != 0 {
+		ea.log.Info("hi")
+	}
 	block, err := engine.ExecutableDataToBlock(engine.ExecutableData{
 		ParentHash:    payload.ParentHash,
 		FeeRecipient:  payload.FeeRecipient,
