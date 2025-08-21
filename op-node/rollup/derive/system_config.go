@@ -187,7 +187,7 @@ func ProcessSystemConfigUpdateLogEvent(destSysCfg *eth.SystemConfig, ev *types.L
 		}
 		minBaseFee, err := solabi.ReadUint64(reader)
 		if err != nil {
-			return NewCriticalError(errors.New("could not read gas limit"))
+			return NewCriticalError(errors.New("could not read minBaseFee"))
 		}
 		if !solabi.EmptyReader(reader) {
 			return NewCriticalError(errors.New("too many bytes"))

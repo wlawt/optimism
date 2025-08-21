@@ -109,20 +109,26 @@ func TestMinBaseFee(t *testing.T) {
 	expectedExtraData := eip1559.EncodeMinBaseFeeExtraData(uint64(expectedDenom), uint64(expectedElasticity), expectedMinBaseFee.Uint64())
 	require.Equal(t, expectedExtraData, h.Extra, "Extra data should match Jovian encoding with minBaseFee")
 
-	// Verify the minimum base fee is enforced
-	require.True(t, h.BaseFee.Cmp(expectedMinBaseFee) >= 0,
-		"Current base fee (%s) should be >= minimum base fee (%s)",
-		h.BaseFee.String(), expectedMinBaseFee.String())
-
-	// Wait for the next block to confirm the constraint is maintained
-	b, err := geth.WaitForBlock(big.NewInt(h.Number.Int64()+1), l2Seq)
+	// The first block with the minimum base fee encoded in ExtraData had its base fee
+	// calculated before the minimum was available. Wait for the next block where
+	// the base fee calculation can use the minimum base fee from the previous block's ExtraData.
+	nextBlock, err := geth.WaitForBlock(big.NewInt(h.Number.Int64()+1), l2Seq)
 	require.NoError(t, err, "waiting for next L2 block")
 
 	// Confirm the extraData is still being set as expected in the next block
-	require.Equal(t, expectedExtraData, b.Header().Extra, "Extra data should still match Jovian encoding with minBaseFee")
+	require.Equal(t, expectedExtraData, nextBlock.Header().Extra, "Extra data should still match Jovian encoding with minBaseFee")
+
+	// Now verify the minimum base fee constraint is enforced in this block
+	require.True(t, nextBlock.Header().BaseFee.Cmp(expectedMinBaseFee) >= 0,
+		"Next block base fee (%s) should be >= minimum base fee (%s)",
+		nextBlock.Header().BaseFee.String(), expectedMinBaseFee.String())
+
+	// Wait for one more block to confirm the constraint is consistently maintained
+	finalBlock, err := geth.WaitForBlock(big.NewInt(nextBlock.Header().Number.Int64()+1), l2Seq)
+	require.NoError(t, err, "waiting for final L2 block")
 
 	// Verify the minimum base fee constraint is still enforced
-	require.True(t, b.Header().BaseFee.Cmp(expectedMinBaseFee) >= 0,
-		"Next block base fee (%s) should be >= minimum base fee (%s)",
-		b.Header().BaseFee.String(), expectedMinBaseFee.String())
+	require.True(t, finalBlock.Header().BaseFee.Cmp(expectedMinBaseFee) >= 0,
+		"Final block base fee (%s) should be >= minimum base fee (%s)",
+		finalBlock.Header().BaseFee.String(), expectedMinBaseFee.String())
 }
