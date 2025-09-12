@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/ethereum-optimism/optimism/op-chain-ops/devkeys"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum-optimism/optimism/op-service/apis"
 	"github.com/ethereum-optimism/optimism/op-service/testreq"
 	"github.com/ethereum-optimism/optimism/op-service/txintent/bindings"
 	"github.com/ethereum-optimism/optimism/op-service/txintent/contractio"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 type MinBaseFee struct {
@@ -91,31 +91,22 @@ func (mbf *MinBaseFee) SetMinBaseFee(minBaseFee uint64) {
 	mbf.t.Logf("Set min base fee on L1: minBaseFee=%d", minBaseFee)
 }
 
-func (mbf *MinBaseFee) VerifyL2Config(expectedMinBaseFee uint64) {
-	client := mbf.l2EL.Escape().L2EthClient()
-	ext, ok := client.(apis.L2EthExtendedClient)
-	mbf.require.True(ok, "L2 client does not support extended payload API")
-
-	payload, err := ext.PayloadByLabel(mbf.ctx, "latest")
-	mbf.require.NoError(err, "failed to get latest payload")
-	mbf.require.True(len(payload.ExecutionPayload.ExtraData) == 17, "payload extra data should be 17 bytes")
-
-	got := binary.BigEndian.Uint64(payload.ExecutionPayload.ExtraData[9:])
-	mbf.require.Equal(expectedMinBaseFee, got, "L2 min base fee did not match expected")
-}
-
 func (mbf *MinBaseFee) CheckBaseFeeCanDecrease() {
+	var prevBlockNum uint64
 	// Ensure we are past genesis and collect a small sample across advancing blocks
 	_ = mbf.l2EL.WaitForBlock()
 	el := mbf.l2EL.Escape().EthClient()
 	bases := make([]*big.Int, 0, 6)
 	info, err := el.InfoByLabel(mbf.ctx, "latest")
 	mbf.require.NoError(err)
+	prevBlockNum = info.NumberU64()
 	bases = append(bases, info.BaseFee())
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		_ = mbf.l2EL.WaitForBlock()
 		next, err := el.InfoByLabel(mbf.ctx, "latest")
 		mbf.require.NoError(err)
+		mbf.require.True(next.NumberU64() > prevBlockNum, "block number should increase")
+		prevBlockNum = next.NumberU64()
 		bases = append(bases, next.BaseFee())
 	}
 	decreased := false
@@ -129,15 +120,21 @@ func (mbf *MinBaseFee) CheckBaseFeeCanDecrease() {
 }
 
 func (mbf *MinBaseFee) VerifyMinBaseFeeClamp(minBase *big.Int) {
+	var prevBlockNum uint64
 	// Give the sequencer one more block, then check 5 consecutive blocks
 	_ = mbf.l2EL.WaitForBlock()
 	el := mbf.l2EL.Escape().EthClient()
+	info, err := el.InfoByLabel(mbf.ctx, "latest")
+	mbf.require.NoError(err)
+	prevBlockNum = info.NumberU64()
 
 	// Check 5 consecutive blocks to ensure min base fee is consistently applied
 	for i := 1; i <= 5; i++ {
 		_ = mbf.l2EL.WaitForBlock()
 		info, err := el.InfoByLabel(mbf.ctx, "latest")
 		mbf.require.NoError(err)
+		mbf.require.True(info.NumberU64() > prevBlockNum, "block number should increase")
+		prevBlockNum = info.NumberU64()
 		mbf.require.True(info.BaseFee().Cmp(minBase) >= 0, "block %d base-fee %s should be >= %s", info.NumberU64(), info.BaseFee(), minBase)
 	}
 }
@@ -165,11 +162,10 @@ func (mbf *MinBaseFee) WaitForMinBaseFee(expected uint64) {
 			return false
 		}
 
-
 		got := binary.BigEndian.Uint64(payload.ExecutionPayload.ExtraData[9:])
 		actualPayload = payload.ExecutionPayload.ExtraData
 		return got == expected
-		}, 2*time.Minute, 5*time.Second, "L2 min base fee did not sync within timeout")
+	}, 2*time.Minute, 5*time.Second, "L2 min base fee did not sync within timeout")
 
 	mbf.require.Equal(expectedExtraData, actualPayload, "extradata doesnt match")
 }
@@ -202,7 +198,6 @@ func TestMinBaseFee(gt *testing.T) {
 		t.Run(tc.name, func(t devtest.T) {
 			minBaseFee.SetMinBaseFee(tc.minBaseFee)
 			minBaseFee.WaitForMinBaseFee(tc.minBaseFee)
-			minBaseFee.VerifyL2Config(tc.minBaseFee)
 
 			if tc.shouldClamp {
 				minBaseFee.VerifyMinBaseFeeClamp(big.NewInt(int64(tc.minBaseFee)))
