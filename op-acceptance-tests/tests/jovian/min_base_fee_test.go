@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/testreq"
 	"github.com/ethereum-optimism/optimism/op-service/txintent/bindings"
 	"github.com/ethereum-optimism/optimism/op-service/txintent/contractio"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 )
 
 type MinBaseFee struct {
@@ -70,7 +71,7 @@ func NewMinBaseFee(t devtest.T, l2Network *dsl.L2Network, l1EL *dsl.L1ELNode, l2
 func (mbf *MinBaseFee) CheckCompatibility() bool {
 	_, err := contractio.Read(mbf.systemConfig.MinBaseFee(), mbf.ctx)
 	if err != nil {
-		mbf.t.Skipf("MinBaseFee methods not available in devstack: %v", err)
+		mbf.t.Fail()
 		return false
 	}
 	return true
@@ -88,10 +89,6 @@ func (mbf *MinBaseFee) SetMinBaseFee(minBaseFee uint64) {
 	mbf.require.NoError(err, "SetMinBaseFee transaction failed")
 
 	mbf.t.Logf("Set min base fee on L1: minBaseFee=%d", minBaseFee)
-}
-
-func (mbf *MinBaseFee) WaitForL2Sync(expectedMinBaseFee uint64) {
-	mbf.waitForMinBaseFee(expectedMinBaseFee)
 }
 
 func (mbf *MinBaseFee) VerifyL2Config(expectedMinBaseFee uint64) {
@@ -147,15 +144,18 @@ func (mbf *MinBaseFee) VerifyMinBaseFeeClamp(minBase *big.Int) {
 
 func (mbf *MinBaseFee) RestoreOriginalConfig() {
 	mbf.SetMinBaseFee(mbf.originalMinBaseFee)
-	mbf.WaitForL2Sync(mbf.originalMinBaseFee)
+	mbf.WaitForMinBaseFee(mbf.originalMinBaseFee)
 }
 
-// waitForMinBaseFee waits until the L2 latest payload extra-data encodes the expected min base fee.
-func (mbf *MinBaseFee) waitForMinBaseFee(expected uint64) {
+// WaitForMinBaseFee waits until the L2 latest payload extra-data encodes the expected min base fee.
+func (mbf *MinBaseFee) WaitForMinBaseFee(expected uint64) {
 	client := mbf.l2EL.Escape().L2EthClient()
 	ext, ok := client.(apis.L2EthExtendedClient)
 	mbf.require.True(ok, "L2 client does not support extended payload API")
 
+	expectedExtraData := eth.BytesMax32(eip1559.EncodeJovianExtraData(250, 6, expected))
+
+	var actualPayload eth.BytesMax32
 	mbf.require.Eventually(func() bool {
 		payload, err := ext.PayloadByLabel(mbf.ctx, "latest")
 		if err != nil {
@@ -164,9 +164,14 @@ func (mbf *MinBaseFee) waitForMinBaseFee(expected uint64) {
 		if len(payload.ExecutionPayload.ExtraData) != 17 {
 			return false
 		}
+
+
 		got := binary.BigEndian.Uint64(payload.ExecutionPayload.ExtraData[9:])
+		actualPayload = payload.ExecutionPayload.ExtraData
 		return got == expected
-	}, 2*time.Minute, 5*time.Second, "L2 min base fee did not sync within timeout")
+		}, 2*time.Minute, 5*time.Second, "L2 min base fee did not sync within timeout")
+
+	mbf.require.Equal(expectedExtraData, actualPayload, "extradata doesnt match")
 }
 
 // TestMinBaseFee verifies configurable minimum base fee using devstack presets.
@@ -196,7 +201,7 @@ func TestMinBaseFee(gt *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t devtest.T) {
 			minBaseFee.SetMinBaseFee(tc.minBaseFee)
-			minBaseFee.WaitForL2Sync(tc.minBaseFee)
+			minBaseFee.WaitForMinBaseFee(tc.minBaseFee)
 			minBaseFee.VerifyL2Config(tc.minBaseFee)
 
 			if tc.shouldClamp {
