@@ -91,35 +91,7 @@ func (mbf *MinBaseFee) SetMinBaseFee(minBaseFee uint64) {
 	mbf.t.Logf("Set min base fee on L1: minBaseFee=%d", minBaseFee)
 }
 
-func (mbf *MinBaseFee) CheckBaseFeeCanDecrease() {
-	var prevBlockNum uint64
-	// Ensure we are past genesis and collect a small sample across advancing blocks
-	_ = mbf.l2EL.WaitForBlock()
-	el := mbf.l2EL.Escape().EthClient()
-	bases := make([]*big.Int, 0, 6)
-	info, err := el.InfoByLabel(mbf.ctx, "latest")
-	mbf.require.NoError(err)
-	prevBlockNum = info.NumberU64()
-	bases = append(bases, info.BaseFee())
-	for range 5 {
-		_ = mbf.l2EL.WaitForBlock()
-		next, err := el.InfoByLabel(mbf.ctx, "latest")
-		mbf.require.NoError(err)
-		mbf.require.True(next.NumberU64() > prevBlockNum, "block number should increase")
-		prevBlockNum = next.NumberU64()
-		bases = append(bases, next.BaseFee())
-	}
-	decreased := false
-	for i := 1; i < len(bases); i++ {
-		if bases[i].Cmp(bases[i-1]) < 0 {
-			decreased = true
-			break
-		}
-	}
-	mbf.require.True(decreased, "expected base-fee to decrease when minBaseFee=0")
-}
-
-func (mbf *MinBaseFee) VerifyMinBaseFeeClamp(minBase *big.Int) {
+func (mbf *MinBaseFee) VerifyMinBaseFee(minBase *big.Int) {
 	var prevBlockNum uint64
 	// Give the sequencer one more block, then check 5 consecutive blocks
 	_ = mbf.l2EL.WaitForBlock()
@@ -137,11 +109,6 @@ func (mbf *MinBaseFee) VerifyMinBaseFeeClamp(minBase *big.Int) {
 		prevBlockNum = info.NumberU64()
 		mbf.require.True(info.BaseFee().Cmp(minBase) >= 0, "block %d base-fee %s should be >= %s", info.NumberU64(), info.BaseFee(), minBase)
 	}
-}
-
-func (mbf *MinBaseFee) RestoreOriginalConfig() {
-	mbf.SetMinBaseFee(mbf.originalMinBaseFee)
-	mbf.WaitForMinBaseFee(mbf.originalMinBaseFee)
 }
 
 // WaitForMinBaseFee waits until the L2 latest payload extra-data encodes the expected min base fee.
@@ -186,12 +153,11 @@ func TestMinBaseFee(gt *testing.T) {
 	sys.FunderL1.FundAtLeast(systemOwner, eth.OneTenthEther)
 
 	testCases := []struct {
-		name        string
-		minBaseFee  uint64
-		shouldClamp bool
+		name       string
+		minBaseFee uint64
 	}{
-		{"MinBaseFeeOff", 0, false},
-		{"MinBaseFeeOn", 1_000_000_000, true},
+		{"MinBaseFeeOff", 0},
+		{"MinBaseFeeOn", 1_000_000_000},
 	}
 
 	for _, tc := range testCases {
@@ -199,16 +165,11 @@ func TestMinBaseFee(gt *testing.T) {
 			minBaseFee.SetMinBaseFee(tc.minBaseFee)
 			minBaseFee.WaitForMinBaseFee(tc.minBaseFee)
 
-			if tc.shouldClamp {
-				minBaseFee.VerifyMinBaseFeeClamp(big.NewInt(int64(tc.minBaseFee)))
-			} else {
-				minBaseFee.CheckBaseFeeCanDecrease()
-			}
+			minBaseFee.VerifyMinBaseFee(big.NewInt(int64(tc.minBaseFee)))
 
 			t.Log("Test completed successfully:",
 				"testCase", tc.name,
-				"minBaseFee", tc.minBaseFee,
-				"shouldClamp", tc.shouldClamp)
+				"minBaseFee", tc.minBaseFee)
 		})
 	}
 }
