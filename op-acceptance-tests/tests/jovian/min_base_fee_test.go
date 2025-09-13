@@ -91,24 +91,40 @@ func (mbf *MinBaseFee) SetMinBaseFee(minBaseFee uint64) {
 	mbf.t.Logf("Set min base fee on L1: minBaseFee=%d", minBaseFee)
 }
 
-func (mbf *MinBaseFee) VerifyMinBaseFee(minBase *big.Int) {
-	var prevBlockNum uint64
-	// Give the sequencer one more block, then check 5 consecutive blocks
-	_ = mbf.l2EL.WaitForBlock()
-	el := mbf.l2EL.Escape().EthClient()
-	info, err := el.InfoByLabel(mbf.ctx, "latest")
-	mbf.require.NoError(err)
-	prevBlockNum = info.NumberU64()
-
-	// Check 5 consecutive blocks to ensure min base fee is consistently applied
-	for i := 1; i <= 5; i++ {
-		_ = mbf.l2EL.WaitForBlock()
-		info, err := el.InfoByLabel(mbf.ctx, "latest")
-		mbf.require.NoError(err)
-		mbf.require.True(info.NumberU64() > prevBlockNum, "block number should increase")
-		prevBlockNum = info.NumberU64()
-		mbf.require.True(info.BaseFee().Cmp(minBase) >= 0, "block %d base-fee %s should be >= %s", info.NumberU64(), info.BaseFee(), minBase)
+func (mbf *MinBaseFee) VerifyMinBaseFee(from *dsl.EOA, to *dsl.EOA, minBase *big.Int, shouldEnforce bool) {
+	// Simulate user transactions
+	for range 20 {
+		from.Transfer(to.Address(), eth.OneGWei)
 	}
+
+	var (
+		observedHigher bool
+		clamped        int
+		prevBlockNum   uint64
+	)
+	info := mbf.getBlock()
+	prevBlockNum = info.NumberU64()
+	for range 5 {
+		n := mbf.getBlock()
+		mbf.require.True(n.NumberU64() > prevBlockNum, "block number should increase")
+		prevBlockNum = n.NumberU64()
+		if !shouldEnforce {
+			if n.BaseFee().Cmp(minBase) > 0 {
+				observedHigher = true
+			}
+		} else {
+			if n.BaseFee().Cmp(minBase) == 0 {
+				clamped++
+			}
+		}
+		mbf.t.Logf("base fee %s, minBase %s, clamped %d", n.BaseFee(), minBase, clamped)
+	}
+
+	if !shouldEnforce {
+		mbf.require.True(observedHigher, "expected base fee to be higher than the minBaseFee")
+		return
+	}
+	mbf.require.True(clamped >= 1, "expected base fee to be clamped to minBaseFee for at least one recent block")
 }
 
 // WaitForMinBaseFee waits until the L2 latest payload extra-data encodes the expected min base fee.
@@ -137,6 +153,14 @@ func (mbf *MinBaseFee) WaitForMinBaseFee(expected uint64) {
 	mbf.require.Equal(expectedExtraData, actualPayload, "extradata doesnt match")
 }
 
+func (mbf *MinBaseFee) getBlock() eth.BlockInfo {
+	_ = mbf.l2EL.WaitForBlock()
+	el := mbf.l2EL.Escape().EthClient()
+	info, err := el.InfoByLabel(mbf.ctx, "latest")
+	mbf.require.NoError(err)
+	return info
+}
+
 // TestMinBaseFee verifies configurable minimum base fee using devstack presets.
 func TestMinBaseFee(gt *testing.T) {
 	t := devtest.SerialT(gt)
@@ -146,6 +170,12 @@ func TestMinBaseFee(gt *testing.T) {
 	err := dsl.RequiresL2Fork(t.Ctx(), sys, 0, rollup.Jovian)
 	require.NoError(err, "Jovian fork must be active for this test")
 
+	fundAmount := eth.OneTenthEther
+	alice := sys.FunderL2.NewFundedEOA(fundAmount)
+
+	alice.WaitForBalance(fundAmount)
+	bob := sys.Wallet.NewEOA(sys.L2EL)
+
 	minBaseFee := NewMinBaseFee(t, sys.L2Chain, sys.L1EL, sys.L2EL)
 
 	minBaseFee.CheckCompatibility()
@@ -153,11 +183,15 @@ func TestMinBaseFee(gt *testing.T) {
 	sys.FunderL1.FundAtLeast(systemOwner, eth.OneTenthEther)
 
 	testCases := []struct {
-		name       string
-		minBaseFee uint64
+		name          string
+		minBaseFee    uint64
+		shouldEnforce bool
 	}{
-		{"MinBaseFeeOff", 0},
-		{"MinBaseFeeOn", 1_000_000_000},
+		// The min base fee is set too low so when there's activity, we enforce the
+		// calculated base fee over the min base fee.
+		{"MinBaseFeeNotEnforced", 0, false},
+		// The min base fee is enforced since the calculated base fee is below the min base fee.
+		{"MinBaseFeeEnforced", 1_000_000_000, true},
 	}
 
 	for _, tc := range testCases {
@@ -165,11 +199,13 @@ func TestMinBaseFee(gt *testing.T) {
 			minBaseFee.SetMinBaseFee(tc.minBaseFee)
 			minBaseFee.WaitForMinBaseFee(tc.minBaseFee)
 
-			minBaseFee.VerifyMinBaseFee(big.NewInt(int64(tc.minBaseFee)))
+			minBase := big.NewInt(int64(tc.minBaseFee))
+			minBaseFee.VerifyMinBaseFee(alice, bob, minBase, tc.shouldEnforce)
 
 			t.Log("Test completed successfully:",
 				"testCase", tc.name,
-				"minBaseFee", tc.minBaseFee)
+				"minBaseFee", tc.minBaseFee,
+				"shouldEnforce", tc.shouldEnforce)
 		})
 	}
 }
