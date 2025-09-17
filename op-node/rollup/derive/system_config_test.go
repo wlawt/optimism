@@ -231,6 +231,31 @@ func TestProcessSystemConfigUpdateLogEvent(t *testing.T) {
 			},
 			err: false,
 		},
+		{
+			name: "SystemConfigUpdateMinBaseFee",
+			log: &types.Log{
+				Topics: []common.Hash{
+					ConfigUpdateEventABIHash,
+					ConfigUpdateEventVersion0,
+					SystemConfigUpdateMinBaseFee,
+				},
+			},
+			hook: func(t *testing.T, log *types.Log) *types.Log {
+				// Set minBaseFee to 1e9
+				minBaseFee := uint64(1e9)
+				numberData, err := oneUint256.Pack(new(big.Int).SetUint64(minBaseFee))
+				require.NoError(t, err)
+				data, err := bytesArgs.Pack(numberData)
+				require.NoError(t, err)
+				log.Data = data
+				return log
+			},
+			config: eth.SystemConfig{
+				EIP1559Params: eth.Bytes8{0, 0, 0, 0, 0, 0, 0, 0},
+				MinBaseFee:    uint64(1e9),
+			},
+			err: false,
+		},
 	}
 
 	for _, test := range tests {

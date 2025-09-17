@@ -611,6 +611,8 @@ type SystemConfig struct {
 	// value will be 0 if Holocene is not active, or if derivation has yet to
 	// process any EIP_1559_PARAMS system config update events.
 	EIP1559Params Bytes8 `json:"eip1559Params"`
+	// MinBaseFee is the minimum base fee.
+	MinBaseFee uint64 `json:"minBaseFee"`
 	// OperatorFeeParams identifies the operator fee parameters.
 	OperatorFeeParams Bytes32 `json:"operatorFeeParams"`
 	// More fields can be added for future SystemConfig versions.
